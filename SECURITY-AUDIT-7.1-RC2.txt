@@ -1,0 +1,215 @@
+================================================================================
+LAPORAN AUDIT KEAMANAN — WordPress 7.1-RC2 (build trunk r63157)
+================================================================================
+Repo    : kamen-sketch/Wordking-prrss  (mirror byte-per-byte WordPress core)
+Basis   : $wp_version = '7.1-RC2-63157', $wp_db_version = 61833
+Banding : WordPress 7.0.3 (rilis stabil terakhir) untuk deteksi regresi
+Sifat   : Untuk ASESMEN MANUAL. Setiap klaim disertai metode + status paritas 7.0.3.
+
+CATATAN KEJUJURAN METODOLOGIS (baca dulu):
+  - Ini core matang. Hampir SETIAP temuan awal berubah jadi pertahanan yang
+    bekerja saat ditelusuri ke sumbernya, dan hampir setiap "temuan tingkat
+    tinggi" yang sempat muncul ternyata BUG DI ALAT saya, bukan di WordPress.
+  - Prinsip: KONTROL POSITIF menentukan. Uji yang "gagal" (0 perubahan / 0
+    payload) TIDAK membuktikan aman kecuali dibuktikan alat/harness-nya bisa
+    mendeteksi kasus positif. Beberapa kali "hasil bersih" ternyata artefak
+    (server mati, denominator salah, SQLite serialisasi).
+  - Verifikasi silang mandiri disarankan untuk setiap baris di bawah.
+
+================================================================================
+RINGKASAN EKSEKUTIF
+================================================================================
+Delapan kelas kerentanan diaudit dengan metode independen. NOL kerentanan
+exploitable-berseverity-tinggi ditemukan. Yang tersisa:
+
+  [A] 2 bug availability upstream (identik 7.0.3) — dampak rendah
+  [B] 1 deprecation PHP 8.4 (identik 7.0.3) — akan fatal di PHP 9
+  [C] 2 race condition by-design (identik semua versi) — dampak rendah
+  [D] 1 SSRF teoretis via DNS-rebinding TOCTOU — keterbatasan fundamental
+  [E] User enumeration by-design — information disclosure rendah
+
+Tidak ada satu pun yang merupakan regresi 7.1. Faktanya 7.1 SEDIKIT LEBIH
+diperkeras dari 7.0.3 (commit 428d37e menambah escaping ke jalur error login).
+
+================================================================================
+MATRIKS KELAS KERENTANAN — semua NOL
+================================================================================
+Kelas                     | Metode                                    | Hasil
+--------------------------|-------------------------------------------|------
+SQL Injection             | 6 alat statis + call graph 12.291 def +   |  0
+                          |   38.105 query runtime + 318 payload fuzz |
+XSS reflektif             | 791 request fuzz (payload berpenanda)     |  0
+XSS tersimpan             | 68 payload x 4 role, 32 respons admin     |  0
+XSS konteks-escaping      | sensus AST 8.699 titik output             |  0
+CSRF                      | 6 aksi + kontrol positif per-aksi         |  0
+XXE                       | uji libxml + baca parser XMP/oEmbed       |  0
+Object injection / POP    | telusur 24 unserialize + gadget __destruct|  0
+SSRF (pingback/oembed)    | uji IP internal + revalidasi redirect     |  0
+Path traversal            | grep file-op dari superglobal + editor    |  0
+Open redirect             | grep wp_redirect($_...)                    |  0
+Password-reset poisoning  | baca retrieve_password + wp_mail From     |  0 (patched)
+
+================================================================================
+[A] BUG AVAILABILITY UPSTREAM (identik 7.0.3, dampak rendah)
+================================================================================
+
+A1. class-pclzip.php:3984 — fclose() atas variabel tak terdefinisi
+--------------------------------------------------------------------------------
+  Kode : fclose($v_file);   // $v_file tidak pernah di-assign di fungsi ini
+         (fungsi privExtractFileUsingTempFile, baris 3977-4052)
+  Efek : Di PHP 8+, fclose(null) melempar TypeError FATAL (bukan warning).
+         @ suppression TIDAK menolongnya (uji: @fclose($undef) tetap TypeError).
+  BUKTI: Direproduksi di Chrome headless. Stack trace berakhir di baris 3984.
+         Pemicu: PCLZIP_TEMPORARY_DIR tidak writable + entri > threshold
+         (memory_limit x 0.47, di-set otomatis oleh privOptionDefaultThreshold).
+  KOREKSI PENTING: Baris 2747 (bug serupa) TAK TERJANGKAU — privWriteFileHeader
+         selalu return 1. Dan jalur ini TIDAK dicapai WordPress core: core
+         memakai extract(PCLZIP_OPT_EXTRACT_AS_STRING) -> privExtractFileAsString
+         (nol rujukan temp-file). Hanya terjangkau lewat PclZip::extract() ke
+         DISK, mis. plugin pihak ketiga.
+  DAMPAK: Rendah. Availability, bukan keamanan. Tidak dapat dipicu penyerang.
+  PARITAS: Byte-identik 7.0.3.
+
+A2. wp-admin/includes/export.php — export_wp() mencemari namespace global
+--------------------------------------------------------------------------------
+  Kode : export_wp() mendeklarasikan 13 fungsi BERNAMA di dalam badan fungsinya:
+         wxr_cdata, wxr_site_url, wxr_cat_name, wxr_category_description,
+         wxr_tag_name, wxr_tag_description, wxr_term_name, wxr_term_description,
+         wxr_term_meta, wxr_authors_list, wxr_nav_menu_terms, wxr_post_taxonomy,
+         wxr_filter_postmeta
+  Efek : (1) Panggilan KEDUA export_wp() dalam 1 proses -> Fatal "Cannot
+             redeclare function wxr_cdata()".
+         (2) Plugin yang sudah mendefinisikan salah satu nama itu -> ekspor
+             FATAL di panggilan PERTAMA (layar putih di Tools > Export).
+         (3) 13 fungsi bocor ke scope global setelah 1 ekspor.
+  BUKTI: Direproduksi. `function wxr_cdata(){}` sebelum export_wp() -> Fatal.
+         function_exists('wxr_cdata') false->true setelah ekspor.
+  DAMPAK: Rendah-Medium. Availability fitur ekspor. Tidak dapat dipicu jarak
+         jauh (butuh plugin bernama sama). LEBIH plausibel dari A1.
+  PARITAS: Byte-identik 7.0.3.
+  CATATAN: PHPStan melaporkan ini (48x "Function wxr_cdata not found", 15x
+         "Inner named functions"). Saya sempat SALAH menggugurkannya sebagai
+         keterbatasan analisis; ternyata bug runtime nyata.
+
+================================================================================
+[B] DEPRECATION PHP 8.4 (identik 7.0.3)
+================================================================================
+
+B1. wp-includes/comment.php:2424 — preg_replace(null)
+--------------------------------------------------------------------------------
+  Kode : $commentdata['comment_author_IP'] =
+             preg_replace('/[^0-9a-fA-F:., ]/', '', $commentdata['comment_author_IP']);
+  Efek : Memanggil wp_new_comment() TANPA comment_author_IP -> $subject null ->
+         "Deprecated: preg_replace(): Passing null to parameter #3 ($subject)".
+  BUKTI: Direproduksi (komentar tetap terbuat, tapi dgn notice).
+  DOKUMENTASI vs KODE: docblock baris 2137 bilang "Default empty" untuk
+         comment_author_IP — tapi default itu TIDAK PERNAH diterapkan di kode.
+  DAMPAK: Sekarang hanya notice. Di PHP 9.0, passing null ke param internal
+         non-nullable menjadi TypeError FATAL. Terkena: pembuatan komentar
+         programatik tanpa IP (WP-CLI, importer, cron, plugin). Request web
+         biasa aman ($_SERVER['REMOTE_ADDR'] terisi).
+  PARITAS: Byte-identik 7.0.3 (baris 2366 di sana).
+
+================================================================================
+[C] RACE CONDITION BY-DESIGN (identik semua versi, dampak rendah)
+================================================================================
+
+C1. wp_insert_user — TOCTOU duplikat username
+--------------------------------------------------------------------------------
+  FAKTA 1 (TERBUKTI): wp_users TIDAK punya UNIQUE constraint pada user_login.
+         Skema (schema.php:204): "KEY user_login_key (user_login)" = non-unik.
+         Uji langsung: dua INSERT user_login identik -> KEDUANYA sukses, 2 baris
+         tersimpan. DB tidak menolak. Identik dgn MySQL (skema sama).
+  FAKTA 2 (TERBUKTI, baca kode): user.php:2325
+         if (!$update && username_exists($user_login)) return WP_Error(...);
+         ... lalu INSERT.  = check-then-act tanpa penguncian.
+  KESIMPULAN: FAKTA 1 + FAKTA 2 = TOCTOU secara definisi. Dua registrasi
+         konkuren nama sama bisa lolos check bersamaan -> duplikat username.
+  BATAS PENGUJIAN (JUJUR): Race menyala saat runtime TIDAK dapat saya
+         demonstrasikan di environment ini. Alasan:
+           - MySQL sungguhan tak bisa dipasang: Docker Hub, apt Ubuntu, pypi,
+             npm, golang-proxy SEMUA diblokir (403). Hanya git-clone jalan.
+           - SQLite (drop-in uji) menserialkan tulis -> window tak muncul.
+           - Startup proses PHP (~300ms) melebihi window; proses stagger.
+           - Drop-in mencegat `new wpdb()` -> tak bisa 2 koneksi terpisah.
+         Ini keterbatasan LINGKUNGAN, BUKAN bukti race tidak ada.
+  DAMPAK: Rendah. get_user_by('login') pakai LIMIT 1 (baris pertama menang) ->
+         isu integritas data, bukan privilege escalation. Penyerang hanya bisa
+         "balapan dgn dirinya" (nama existing tertangkap check yg sudah commit).
+  KONTRAS (kenapa ini by-design): add_option (option.php:1142) memakai
+         "INSERT ... ON DUPLICATE KEY UPDATE" atas UNIQUE option_name = upsert
+         ATOMIK. WordPress TAHU cara benar; memilih tidak untuk user karena
+         duplikat ditoleransi. Keputusan sadar, bukan kelalaian.
+  PARITAS: Skema identik 7.0.3 dan semua versi.
+
+C2. spawn_cron — TOCTOU double-execution cron
+--------------------------------------------------------------------------------
+  Kode : cron.php:915  $lock = get_transient('doing_cron');   // cek
+         cron.php:943  set_transient('doing_cron', ...);       // tulis
+         Transient tidak atomik -> window antara cek dan tulis.
+  MITIGASI: compare-after-set. wp-cron.php membaca ulang token $doing_wp_cron
+         dan hanya proses yang menang lock yang lanjut. Best-effort.
+  DAMPAK: Rendah. Worst case satu cron job jalan dua kali. WP sengaja tidak
+         pakai DB locking di sini.
+  PARITAS: identik semua versi.
+
+CATATAN kelas race: TIDAK ADA pola "SET x = x + 1" (increment SQL non-atomik)
+  di seluruh core (grep kosong). Semua counter (comment_count, term count)
+  pakai recount SELECT COUNT(*) lalu UPDATE = N -> IDEMPOTEN, aman dari race.
+
+================================================================================
+[D] SSRF TEORETIS — DNS-rebinding TOCTOU
+================================================================================
+  Konteks: pingback.ping (class-wp-xmlrpc-server.php:7072) dan oEmbed proxy
+         memakai wp_safe_remote_get (tervalidasi wp_http_validate_url).
+  PERTAHANAN (terbukti, uji langsung):
+    - Blocklist komprehensif: 127/8, 10/8, 172.16/12, 192.168/16, 169.254/16
+      (link-local + CLOUD METADATA), CGNAT, TEST-NET, multicast, reserved.
+      Uji: 169.254.169.254, 10.0.0.1, [::1], 0177.0.0.1 (oktal),
+      2130706433 (desimal) -> SEMUA DIBLOKIR. Bypass encoding gagal.
+    - Revalidasi redirect TIAP HOP: class-wp-http.php:353 daftar
+      validate_redirects sbg hook requests.before_redirect; throw bila gagal.
+    - Pengecualian loopback HANYA untuk host situs sendiri (uji: dgn
+      home=example.com, 127.0.0.1 & localhost DIBLOKIR).
+  CELAH TERSISA: DNS rebinding. wp_http_validate_url resolve via gethostbyname
+         sekali; fetch resolve ULANG. Penyerang dgn DNS TTL sangat rendah bisa
+         balas IP publik ke validasi, IP internal ke fetch.
+  DAMPAK: Rendah. Keterbatasan FUNDAMENTAL validasi-resolusi-sekali (bukan bug
+         7.1). Butuh DNS terkontrol penyerang. Tak bisa ditambal tanpa pin-IP
+         yang tak dilakukan transport PHP mana pun.
+  CATATAN: Blocklist 169.254 dari commit 7.1 c794a2e "HTTP API: Improve
+         compliance with IPv4 Special-Purpose Address Space" = hardening aktif.
+
+================================================================================
+[E] USER ENUMERATION (by-design, information disclosure rendah)
+================================================================================
+  Terbukti live (unauth):
+    /?author=1                    -> 301 /author/admin/     (bocor username ID 1)
+    /wp-json/wp/v2/users          -> ['admin', ...]         (bocor semua author)
+    /oembed/1.0/embed             -> author_name: admin
+  DAMPAK: Rendah. Perilaku TERDOKUMENTASI & disengaja WordPress (arsip author
+         fitur inti; REST /users hanya author yg punya post terpublikasi).
+         Bukan kelas CVE. Mitigasi = urusan plugin/konfigurasi.
+
+================================================================================
+CATATAN PENUTUP UNTUK ASESOR
+================================================================================
+1. Repo ini mirror byte-per-byte WordPress core, NOL modifikasi lokal. HEAD
+   persis di upstream (tree hash identik). Tidak ada "kode kamu" yang bisa
+   punya bug — semua adalah kode WordPress yang sudah lewat review kontributor.
+
+2. Risiko OPERASIONAL utama BUKAN salah satu temuan di atas, melainkan: ini
+   7.1 RELEASE CANDIDATE, bukan rilis stabil. RC secara definisi masih masa
+   perburuan bug. Untuk produksi: pakai 7.0.3 (stabil terakhir).
+
+3. Semua perkakas audit ada di /workspace (di luar repo): instalasi WordPress
+   berjalan di /workspace/wpsite (SQLite drop-in + instrumentasi query), dan
+   scanner di scratchpad. Tidak di-commit ke repo ini agar mirror tetap bersih.
+
+4. Untuk memverifikasi C1 (race) secara runtime, perlu environment dgn MySQL/
+   MariaDB nyata (row-level locking) — tidak tersedia di sini. Harness siap.
+
+--------------------------------------------------------------------------------
+Dihasilkan oleh sesi audit Claude Code. Untuk asesmen manual — verifikasi
+silang tiap baris disarankan.
+================================================================================
