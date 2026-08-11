@@ -9,5 +9,19 @@
 /wp-content/cache/
 /wp-content/debug.log
 
+# Drop-ins and rewrite rules that caching, security and analytics plugins
+# write into the site root and wp-content/ on activation. Generated per
+# install (some, like Really Simple Security's key, embed a random secret),
+# so they must never be committed.
+/.htaccess
+/.htaccess.bk
+/koko-analytics-collect.php
+/wp-content/advanced-cache.php
+/wp-content/db.php
+/wp-content/object-cache.php
+/wp-content/autoptimize_404_handler.php
+/wp-content/litespeed/
+/wp-content/w3tc-config/
+
 __pycache__/
 *.pyc
