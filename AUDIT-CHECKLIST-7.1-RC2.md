@@ -36,6 +36,12 @@ Legenda status: ✅ selesai-aman · 🔴 temuan (by-design/nyata) · 🔎 sedang
 | — | | superglobal→echo mentah | ✅ | [I2] legacy-widget admin-gate; loginout encoded (PoC) |
 | — | | == rahasia longgar / format-string | ✅ | [I4][I5] nihil |
 | — | | RNG lemah utk rahasia | ✅ | [I7] wp_rand=CSPRNG; wpdb fallback benign |
+| — | Bug laten (kode lama) | KSES bypass (36 vektor) | ✅ | [J1] 0 bypass + kontrol positif |
+| — | | pipeline komentar pasca-kses | ✅ | [J2] make_clickable/texturize aman |
+| — | | open redirect (23 vektor) | ✅ | [J3] 0 kebocoran + kontrol positif |
+| — | | fast-hash / kunci GDPR/app-pass | ✅ | [J4] semua input high-entropy |
+| — | | post password (phpass+REST) | ✅ | [J5] timing-safe by-design |
+| — | | sitemap XML + XSL stylesheet | ✅ | [J6] esc_xml/esc_url, no reflect |
 
 ## Log file yang sudah dibaca (ronde ini akan menambah)
 - lihat bagian [A]–[G] SECURITY-AUDIT-7.1-RC2.txt untuk file yang sudah ditelaah.

@@ -481,3 +481,69 @@ I8. SSRF via wp_remote_* (non-pingback)  [SAFE]
 KESIMPULAN [I]: perburuan anomali (deviasi pola) menyeluruh. Dua sink tak-normal
 nyata (legacy-widget $_GET, loginout $_SERVER) keduanya gated-admin atau
 dinetralkan hilir (di-PoC). Tidak ada bug baru yang reachable unauth/subscriber.
+
+================================================================================
+[J] BURU BUG LATEN (bukan regresi) — kode stabil lama, reachable unauth
+================================================================================
+Arahan: cari bug yang SUDAH LAMA ADA di kode yang TIDAK berubah, bukan regresi
+7.0.3->7.1. Metode: serang komponen unauth paling kompleks & historically-buggy
+dengan PoC runtime + kontrol positif. Semua BERTAHAN (hasil negatif berbukti).
+
+J1. KSES bypass (wp_kses konteks komentar, unauth)  [SAFE]
+--------------------------------------------------------------------------------
+  36 vektor: obfuscation protokol (javascript:/vbscript:/data:, entity, tab,
+  newline, casing, &colon;), event-handler (spasi/casing/slash), tag-smuggling
+  (<scr<script>ipt>, <svg><script>, <math><mtext>, <xmp>, <noscript>), breakout
+  atribut (&quot;/&#34;), CSS expression, null-byte, CDATA/conditional-comment.
+  Hasil: 0 bypass nyata. 2 "hit" = false positive detektor (on-handler di DALAM
+  nilai atribut ter-entity &quot; -> tak breakout). Kontrol positif: tanpa kses,
+  detektor menangkap bahaya (jadi uji sahih).
+
+J2. Pipeline tampil komentar SETELAH kses (unauth)  [SAFE]
+--------------------------------------------------------------------------------
+  Filter comment_text urut: make_clickable(9), wptexturize(10), convert_chars(10),
+  convert_smilies(20), force_balance_tags(25), wpautop(30), capital_P_dangit(31).
+  Uji: apakah transform PASCA-kses membentuk-ulang konstruk bahaya dari input
+  kses-aman? 11 vektor (URL dgn kutip/kurung, entity balik, wpautop/balance).
+  Hasil: 0. make_clickable menghentikan URL di kutip pertama -> sisa jadi teks
+  inert; kses sudah lucuti tag sebelum make_clickable jalan.
+
+J3. Open redirect wp_validate_redirect (unauth via redirect_to)  [SAFE]
+--------------------------------------------------------------------------------
+  23 vektor bypass klasik: //evil, ///evil, /\evil, \/\/evil, http://self@evil,
+  http://self\@evil, whitespace/newline/tab/null di skema, https:/evil,
+  https:evil, /....//evil, unicode-dot, leading-space, javascript:, data:.
+  Hasil: 0 kebocoran. Semua host asing -> jatuh ke fallback ATAU jadi path
+  relatif host sendiri; trik @-userinfo -> parse ke host situs. Kontrol positif:
+  external tanpa allowlist -> fallback.
+
+J4. wp_validate_user_request_key + wp_fast_hash (unauth, GDPR)  [SAFE]
+--------------------------------------------------------------------------------
+  wp_fast_hash = BLAKE2b keyed (domain-sep konstan), deterministik/unsalted,
+  CEPAT. Aman HANYA bila input high-entropy. Enumerasi SEMUA pemakai:
+    - user-request key: wp_generate_password(20) ~120 bit -> high entropy OK
+    - post_password column di wp_generate_user_request_key: key 20-char, BUKAN
+      password post-visibility (itu tetap phpass) -> high entropy OK
+    - application password: 24-char generated -> high entropy OK
+    - recovery-mode key: generated -> high entropy OK
+  Verifikasi hash_equals (timing-safe, arah benar). Tak ada input low-entropy /
+  attacker-controlled -> tak ada preimage/oracle. Anomali kecil: $request->
+  confirm_key dibaca sebelum cek !$request (PHP8 warning+null lalu return error;
+  bukan exploitable).
+
+J5. Post password (visibility) — phpass + REST  [SAFE]
+--------------------------------------------------------------------------------
+  post_password_required: PasswordHash(8,true) portable/salted (BUKAN fast-hash).
+  REST posts-controller:596: hash_equals($post->post_password, param password)
+  timing-safe. By-design (kolom plaintext = desain lama, butuh akses DB).
+
+J6. Sitemaps XML (unauth) + stylesheet XSL  [SAFE]
+--------------------------------------------------------------------------------
+  Renderer: esc_url() utk loc, esc_xml() utk sisanya via SimpleXMLElement.
+  esc_xml = _wp_specialchars(ENT_XML1) + penanganan CDATA. Stylesheet hanya
+  string i18n __() + URL post; TIDAK ada refleksi $_GET/$_SERVER. Tak ada XSS.
+
+KESIMPULAN [J]: perburuan bug laten pada titik-titik paling rawan-0day &
+unauth-reachable (kses, pipeline komentar, redirect, fast-hash/kunci, post
+password, sitemap) — semua BERTAHAN dengan bukti PoC + kontrol positif. Tidak
+ditemukan bug laten baru. Ini hasil negatif yang berbukti, bukan asumsi.
