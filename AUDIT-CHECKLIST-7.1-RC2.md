@@ -42,6 +42,7 @@ Legenda status: ✅ selesai-aman · 🔴 temuan (by-design/nyata) · 🔎 sedang
 | — | | fast-hash / kunci GDPR/app-pass | ✅ | [J4] semua input high-entropy |
 | — | | post password (phpass+REST) | ✅ | [J5] timing-safe by-design |
 | — | | sitemap XML + XSL stylesheet | ✅ | [J6] esc_xml/esc_url, no reflect |
+| — | Known CVEs | CVE-2026-63030 batch route-confusion | ✅ | [K] Patched in 7.0.2+; 7.1-RC2 confirmed safe |
 
 ## Log file yang sudah dibaca (ronde ini akan menambah)
 - lihat bagian [A]–[G] SECURITY-AUDIT-7.1-RC2.txt untuk file yang sudah ditelaah.

@@ -547,3 +547,34 @@ KESIMPULAN [J]: perburuan bug laten pada titik-titik paling rawan-0day &
 unauth-reachable (kses, pipeline komentar, redirect, fast-hash/kunci, post
 password, sitemap) — semua BERTAHAN dengan bukti PoC + kontrol positif. Tidak
 ditemukan bug laten baru. Ini hasil negatif yang berbukti, bukan asumsi.
+
+[K] CVE-2026-63030 ("wp2shell") — REST Batch Route-Confusion SQLi
+================================================================================
+Penelitian: Batch endpoint route-confusion yang mengganggu permission checks
+dalam sub-request, memungkinkan unauth SQLi + pre-auth admin creation.
+
+Referensi:
+  Affected: WordPress 6.9.0–6.9.4, 7.0.0–7.0.1
+  Fixed:    7.0.2+, 7.1-RC2
+  PoC Repo: Ch4120N/CVE-2026-63030
+
+Status pada 7.1-RC2: PATCHED
+
+Bukti kode:
+  1. Batch endpoint (class-wp-rest-server.php:1741–1900)
+     - Line 1784: match_request_to_handler() untuk setiap sub-request
+     - Line 1889: respond_to_request() SELALU dipanggil, termasuk permission_callback
+     - Line 1260 (respond_to_request): permission callback dijalankan + validasi
+
+  2. Route confusion mitigasi
+     - Desync primer {"method": "POST", "path": "///"} menghasilkan WP_Error
+     - Tidak menyebabkan schema misalignment (setiap sub-request di-match segar)
+     - Permission checks tidak dapat di-bypass via route confusion
+
+  3. Batch allowance enforcement (lines 1795–1809)
+     - Hanya route dengan allow_batch flag yang dapat di-batch
+     - Error jika endpoint tidak mendukung batch
+
+Kesimpulan: CVE-2026-63030 TIDAK EXPLOITABLE pada 7.1-RC2. Patch di 7.0.2
+memastikan setiap sub-request batch menjalani permission checks penuh.
+Desync route tidak dapat lagi menyebabkan schema/execution misalignment.
