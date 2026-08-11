@@ -1,0 +1,52 @@
+# 40 plugin populer (slug wordpress.org) untuk lab audit WordPress 7.1-RC2.
+# Satu slug per baris; baris kosong / diawali '#' diabaikan.
+# Dipakai install-plugins.sh mode wp-cli (butuh akses wordpress.org).
+
+# --- SEO / konten ---
+wordpress-seo
+seo-by-rank-math
+all-in-one-seo-pack
+google-site-kit
+wordpress-importer
+# --- Form / kontak / marketing ---
+contact-form-7
+wpforms-lite
+wp-mail-smtp
+mailchimp-for-wp
+# --- E-commerce ---
+woocommerce
+# --- Page builder / editor ---
+elementor
+classic-editor
+classic-widgets
+# --- Keamanan / auth (fokus audit) ---
+wordfence
+two-factor
+limit-login-attempts-reloaded
+wps-hide-login
+really-simple-ssl
+# --- Cache / performa ---
+w3-total-cache
+wp-super-cache
+litespeed-cache
+wp-fastest-cache
+autoptimize
+wp-optimize
+wp-smushit
+regenerate-thumbnails
+# --- Backup / maintenance ---
+updraftplus
+# --- Utilitas / admin ---
+jetpack
+akismet
+redirection
+tablepress
+loco-translate
+duplicate-post
+disable-comments
+antispam-bee
+cookie-notice
+health-check
+query-monitor
+wordpress-popular-posts
+simple-history

@@ -1,0 +1,26 @@
+# === WP 7.1-RC2 audit lab — artefak runtime (di-generate wp-lab/ scripts) ===
+# Jangan commit config/DB/plugin hasil unduh; semuanya bisa dibuat ulang.
+/wp-config.php
+/wp-router.php
+/wp-content/db.php
+/wp-content/database/
+/wp-content/debug.log
+/wp-content/upgrade/
+/wp-content/uploads/
+
+# Plugin yang dipasang lab (subdir mana pun di wp-content/plugins).
+# File contoh bawaan (hello.php, index.php) tetap ter-track karena bukan subdir.
+/wp-content/plugins/*/
+
+# Drop-in & artefak yang dibuat plugin cache saat aktivasi (runtime)
+/.htaccess
+/wp-content/advanced-cache.php
+/wp-content/object-cache.php
+/wp-content/autoptimize_404_handler.php
+/wp-content/cache/
+/wp-content/w3tc-config/
+/wp-content/wflogs/
+/wp-content/et-cache/
+
+# Log server lokal
+*.log
