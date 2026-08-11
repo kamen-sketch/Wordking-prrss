@@ -1,0 +1,48 @@
+# slug	method	repository	release-path-or-tag
+# method: github-release        -> install-from-github-release.sh
+#         github-source         -> git clone at tag, copy plugin root
+#         built-mirror          -> sparse checkout of a prebuilt tree
+#         +build-vendor         -> plus build-vendor.py for vendor/
+advanced-custom-fields	github-release	AdvancedCustomFields/acf	6.8.7/advanced-custom-fields-6.8.7.zip
+akismet	built-mirror	Automattic/vip-go-mu-plugins-built	akismet @ 2026-08-04
+all-in-one-seo-pack	github-source	awesomemotive/all-in-one-seo-pack	4.9.10
+autoptimize	github-source	futtta/autoptimize	2.8.3
+classic-editor	github-source	WordPress/classic-editor	HEAD
+classic-widgets	github-source	WordPress/classic-widgets	HEAD
+classifai	github-release	10up/classifai	3.9.0/classifai.zip
+co-authors-plus	github-release	Automattic/co-authors-plus	4.1.1/co-authors-plus.zip
+contact-form-7	github-source	takayukister/contact-form-7	HEAD
+distributor	github-release	10up/distributor	2.2.0/distributor.zip
+duplicate-post	github-release	Yoast/duplicate-post	4.7/duplicate-post-4.7.zip
+easy-digital-downloads	github-release	EasyDigitalDownloads/easy-digital-downloads	3.6.9/easy-digital-downloads-3.6.9.zip
+elementor	github-release	elementor/elementor	4.2.2/elementor-4.2.2.zip
+give	github-release	impress-org/givewp	4.16.6/give.zip
+gutenberg	github-release	WordPress/gutenberg	v23.7.1/gutenberg.zip
+jetpack	built-mirror	Automattic/vip-go-mu-plugins-built	jetpack @ 2026-08-04
+koko-analytics	github-release	ibericode/koko-analytics	2.5.2/koko-analytics-2.5.2.zip
+litespeed-cache	github-source	litespeedtech/lscache_wp	7.9
+mailchimp-for-wp	github-release	ibericode/mailchimp-for-wordpress	4.14.0/mailchimp-for-wp-4.14.0.zip
+performance-lab	github-release	WordPress/performance	3.9.0/performance-lab.zip
+plugin-check	github-release	WordPress/plugin-check	2.0.0/plugin-check.zip
+query-monitor	github-source	johnbillion/query-monitor	4.0.7
+really-simple-ssl	github-source+build-vendor	rlankhorst/really-simple-ssl	9.5.7
+redirection	github-release	johngodley/redirection	5.9.0/redirection.zip
+regenerate-thumbnails	github-release	Viper007Bond/regenerate-thumbnails	v3.1.6/regenerate-thumbnails.zip
+relevanssi	github-source	msaari/relevanssi	4.28.1
+safe-svg	github-release	10up/safe-svg	2.4.0/safe-svg.zip
+seo-by-rank-math	github-source	rankmath/seo-by-rank-math	1.0.218
+stream	github-release	xwp/stream	v4.3.0/stream.zip
+sucuri-scanner	github-release	Sucuri/sucuri-wordpress-plugin	2.7.4/sucuri-scanner.zip
+tablepress	github-release	TobiasBg/TablePress	3.3.3/tablepress.3.3.3.zip
+two-factor	github-release	WordPress/two-factor	0.16.0/two-factor.zip
+user-registration	github-release	wpeverest/user-registration	5.2.6/user-registration.zip
+user-switching	github-source	johnbillion/user-switching	1.12.1
+w3-total-cache	github-release	BoldGrid/W3-Total-Cache	2.10.5/w3-total-cache.zip
+woocommerce	github-release	woocommerce/woocommerce	11.0.1/woocommerce.zip
+woocommerce-gateway-stripe	github-release	woocommerce/woocommerce-gateway-stripe	10.8.5/woocommerce-gateway-stripe.zip
+wordpress-seo	github-release	Yoast/wordpress-seo	28.2/wordpress-seo-28.2.zip
+wp-crontrol	github-source	johnbillion/wp-crontrol	1.21.1
+wp-graphql	github-release	wp-graphql/wp-graphql	v2.6.0/wp-graphql.zip
+wp-mail-smtp	github-release	awesomemotive/WP-Mail-SMTP	4.9.0/wp-mail-smtp-4.9.0.zip
+wp-statistics	github-source	wp-statistics/wp-statistics	14.16.10
+wp-super-cache	github-release	Automattic/wp-super-cache	v3.1.1/wp-super-cache.zip

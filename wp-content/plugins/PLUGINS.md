@@ -92,39 +92,20 @@ Two consequences:
 PHP dependencies are a different story: Composer works fully offline, which is
 how the plugins in categories 2 and 4 above were produced.
 
-### Building a plugin's `vendor/` without Packagist
+### Tooling
 
-Packagist is unreachable, but most WordPress plugins' PHP dependencies live on
-GitHub, which is reachable. Two recipes cover almost every case.
+The scripts that produced this tree, and the recipes behind them, live in
+[`tools/plugin-install/`](../../tools/plugin-install/README.md):
 
-**A. Plugin with no real Composer dependencies** — its `vendor/` is nothing but
-a generated autoloader, so generate it locally:
+| Script | Purpose |
+| --- | --- |
+| `install-from-wporg.sh` | Install from the plugin directory. The preferred path, once the allowlist permits it. |
+| `install-from-github-release.sh` | Install the built zip attached to a project's GitHub release. Used for 28 plugins here. |
+| `build-vendor.py` | Build a plugin's `vendor/` offline, resolving dependencies from GitHub instead of Packagist. |
+| `verify-plugins.py` | Check every plugin directory for header, syntax, missing `vendor/` and unbuilt assets. |
 
-```sh
-composer dump-autoload --no-dev --classmap-authoritative --no-scripts
-```
-
-**B. Plugin with real dependencies** — read the exact repository URL and version
-of each dependency out of the plugin's `composer.lock` (the `source.url` field;
-it is often a different name than the Composer package name — Really Simple SSL
-requires `fbett/le_acme2`, which lives at `github.com/fbett/le-acme2-php`),
-clone each one at its locked tag, then point Composer at the clones as *path*
-repositories and disable Packagist:
-
-```sh
-git clone --depth 1 --branch 1.5.6 https://github.com/fbett/le-acme2-php.git /tmp/deps/le-acme2
-git clone --depth 1 --branch v1.0.7 https://github.com/plesk/api-php-lib.git  /tmp/deps/plesk
-
-composer config repositories.packagist false
-composer config repositories.le     path /tmp/deps/le-acme2
-composer config repositories.plesk  path /tmp/deps/plesk
-composer install --no-dev --no-scripts --optimize-autoloader --ignore-platform-req=php
-```
-
-`--ignore-platform-req=php` is needed when a dependency pins an older PHP than
-the local CLI. Restore the plugin's original `composer.json` / `composer.lock`
-afterwards so the shipped files stay identical to upstream; only the generated
-`vendor/` is kept.
+`tools/plugin-install/sources.tsv` records the exact repository and release path
+each of the plugins below came from, so this tree can be rebuilt from scratch.
 
 ## Not installed, and why
 
@@ -144,8 +125,9 @@ With those two hosts reachable, every plugin above can be installed from its
 canonical, already-built plugin-directory zip:
 
 ```sh
-curl -fsSL -o /tmp/p.zip https://downloads.wordpress.org/plugin/<slug>.latest-stable.zip
-unzip -q -o /tmp/p.zip -d wp-content/plugins/
+tools/plugin-install/install-from-wporg.sh site-kit-wp polylang wordfence \
+    updraftplus wpforms-lite wp-smushit health-check simple-history antispam-bee
+tools/plugin-install/verify-plugins.py
 ```
 
 Adding `registry.npmjs.org` instead would allow building the JS-only cases from
