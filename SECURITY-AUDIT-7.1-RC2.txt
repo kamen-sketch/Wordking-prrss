@@ -578,3 +578,67 @@ Bukti kode:
 Kesimpulan: CVE-2026-63030 TIDAK EXPLOITABLE pada 7.1-RC2. Patch di 7.0.2
 memastikan setiap sub-request batch menjalani permission checks penuh.
 Desync route tidak dapat lagi menyebabkan schema/execution misalignment.
+
+================================================================================
+[L] RONDE VERIFIKASI INDEPENDEN (2026-08-11) — cross-check hasil sebelumnya
+================================================================================
+Tujuan: menguji ulang klaim "0 exploitable" dengan pendekatan sumber-pertama
+(baca file + git), mencari kesalahan auditor pada permukaan baru-di-7.1 yang
+paling bernilai dan reachable unauth/subscriber. Setiap item = bukti file.
+
+L0. PROVENANCE — apakah ini WordPress asli atau ada backdoor tertanam?
+--------------------------------------------------------------------------------
+  Metode: `git diff up/master..HEAD` (up = github.com/WordPress/WordPress).
+  Hasil : SATU-SATUNYA perubahan vs upstream adalah 4 file dokumen audit
+          (*.md/*.txt). NOL baris PHP berbeda dari upstream trunk r63095.
+  Bukti : merge-base(HEAD, up/master) == up/master HEAD; `git diff --stat
+          up/master -- '*.php'` kosong.
+  Arti  : Ini core WordPress murni. Tidak ada vuln yang "ditanam" di diff —
+          temuan apa pun harus berupa 0-day core sejati (bar sangat tinggi).
+
+L1. Interactivity API / Script Modules — XSS via JSON state (unauth front-end)
+--------------------------------------------------------------------------------
+  Hipotesis: state/config di-serialisasi ke <script type="application/json">;
+             jika encoding tak meng-escape `<`, konten bisa breakout </script>.
+  Bukti : class-wp-script-modules.php:1109/1111 memakai JSON_HEX_TAG (semua
+          `<`/`>` -> </>), juga import map (:624) & i18n (:408).
+  Verdikt: AMAN — breakout </script> tidak mungkin. (bukan regresi)
+
+L2. KSES unauth (komentar) vs directive/data-* injection
+--------------------------------------------------------------------------------
+  Hipotesis: bila kses komentar mengizinkan data-wp-*, penyerang bisa menaruh
+             direktif Interactivity yang dihidrasi klien.
+  Bukti : $allowedtags (kses.php:605–633) — daftar KETAT untuk komentar unauth:
+          hanya a/abbr/acronym/b/blockquote/cite/code/del/em/i/q/s/strike/strong
+          dengan atribut {href,title,cite,datetime}. TIDAK ada data-*.
+          `data-*`=>true HANYA di $allowedposttags (butuh kapabilitas edit
+          konten; contributor+, BUKAN subscriber).
+  Tambahan: proses direktif Interactivity hanya jalan pada output render_block,
+          bukan pada konten komentar. Ganda tak-terjangkau.
+  Verdikt: AMAN — tak ada injeksi direktif dari unauth/subscriber.
+
+L3. oEmbed endpoints — SSRF & permission
+--------------------------------------------------------------------------------
+  Bukti : class-wp-oembed-controller.php
+          - /embed (:42) permission __return_true TAPI hanya resolve URL ke
+            POST LOKAL (get_data), tidak fetch URL remote sembarang -> no SSRF.
+          - /proxy (:70,148–149) permission = current_user_can('edit_posts').
+            Subscriber TIDAK punya edit_posts -> proxy SSRF tak-terjangkau
+            subscriber; hanya contributor+.
+  Verdikt: AMAN untuk unauth & subscriber. (konsisten dgn [D]/[F3])
+
+L4. Sink berbahaya atas data request (sensus ulang)
+--------------------------------------------------------------------------------
+  Metode: grep eval()/create_function/preg_replace /e/assert/unserialize($_*)/
+          extract($_*) di wp-includes + entry files unauth.
+  Hasil : NOL. Kecocokan hanya komentar dokumentasi (class-json.php) & pesan
+          assert() statis PHPStan di SimplePie (bukan input). Tak ada
+          unserialize/extract dari $_GET/$_POST/$_REQUEST/$_COOKIE.
+  Verdikt: AMAN.
+
+KESIMPULAN RONDE [L]:
+  Empat permukaan bernilai-tertinggi (provenance, Interactivity/JSON, KSES
+  unauth, oEmbed, sink request) diverifikasi ulang secara independen dari
+  sumber. SEMUA mengkonfirmasi hasil sebelumnya; TIDAK ditemukan kesalahan
+  auditor maupun kerentanan baru yang reachable unauth/subscriber.
+  Status keseluruhan tetap: 0 exploitable unauth/subscriber.

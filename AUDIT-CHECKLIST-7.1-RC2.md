@@ -43,6 +43,11 @@ Legenda status: ✅ selesai-aman · 🔴 temuan (by-design/nyata) · 🔎 sedang
 | — | | post password (phpass+REST) | ✅ | [J5] timing-safe by-design |
 | — | | sitemap XML + XSL stylesheet | ✅ | [J6] esc_xml/esc_url, no reflect |
 | — | Known CVEs | CVE-2026-63030 batch route-confusion | ✅ | [K] Patched in 7.0.2+; 7.1-RC2 confirmed safe |
+| — | Provenance | backdoor/planted diff vs upstream | ✅ | [L0] git diff up/master: 0 baris PHP beda (murni core) |
+| — | Interactivity/Script Modules | XSS via JSON state (unauth FE) | ✅ | [L1] JSON_HEX_TAG di script-modules.php:1109 |
+| — | KSES unauth | injeksi direktif data-wp-* di komentar | ✅ | [L2] $allowedtags ketat; data-* hanya di $allowedposttags |
+| — | oEmbed | SSRF /proxy & /embed | ✅ | [L3] /proxy butuh edit_posts; /embed hanya post lokal |
+| — | Sink request | eval/unserialize/extract($_*) | ✅ | [L4] sensus ulang: 0 sink atas data request |
 
 ## Log file yang sudah dibaca (ronde ini akan menambah)
 - lihat bagian [A]–[G] SECURITY-AUDIT-7.1-RC2.txt untuk file yang sudah ditelaah.
