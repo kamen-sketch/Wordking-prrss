@@ -279,3 +279,82 @@ F3. Pingback external SSRF (UNAUTH)  [VERIFIED]
   - wp-trackback.php: sanitize_url/text/textarea + charset whitelist
     mb_list_encodings + UTF-7 blokir; tb_id (int); DB prepare %d/%s.
   - wp-cron.php: unauth by-design, ter-lock transient doing_cron.
+
+================================================================================
+[G] ITERASI DIFF-DRIVEN 7.0.3 -> 7.1 (baca kode yang BERUBAH, bukan ingatan)
+================================================================================
+Metode: `diff -rq wp-includes` 7.0.3 vs 7.1-RC2 -> tiap file .php yang BERUBAH
+dan unauth/subscriber-reachable ditelaah dari sumber + PoC runtime (internal
+rest_do_request + unit filter). Tidak ada file .php yang benar-benar baru
+(ai-client & abilities-api sudah ada di 7.0.3, hanya berubah).
+
+G1. core/comment-author-name block — perubahan sprintf %1s -> %1$s  [SAFE]
+--------------------------------------------------------------------------------
+  Root cause dugaan: $comment_author = get_comment_author() ditaruh ke <div>
+    TANPA esc_html (comment-author-name.php:52). Nama komentar = input unauth.
+  Analisis: perubahan 7.1 hanya kosmetik. `%1s` di PHP = lebar-minimum-1 yang
+    mengonsumsi argumen SECARA URUT -> 7.0.3 kebetulan sudah benar & ter-escape
+    (esc_url/esc_attr). `%1$s` versi 7.1 = sintaks posisional yang benar. Nihil
+    beda keamanan.
+  PoC (unit, dijalankan): apply_filters('pre_comment_author_name', <payload>):
+    '<script>alert(1)</script>' -> ''(kosong)
+    '"><svg onload=alert(1)>'   -> '\"&gt;'  (tag dilucuti, > jadi entity)
+    'John<img onerror=..>'       -> 'John'
+    Rantai input: sanitize_text_field + wp_filter_kses + _wp_specialchars(30).
+    Output = konteks teks (bukan atribut). Tag mustahil terbentuk. SAFE.
+
+G2. Abilities API RUN endpoint — enforcement izin  [SAFE, live-tested]
+--------------------------------------------------------------------------------
+  Root cause dicek: run-controller permission_callback=check_ability_permissions
+    (baris 143) memanggil $ability->check_permissions($input) SEBELUM execute;
+    REST core selalu jalankan permission_callback dulu. Fail-closed penuh.
+  PoC (internal rest_do_request, dijalankan live):
+    UNAUTH  GET .../get-site-info/run        -> 401 rest_ability_cannot_execute
+    UNAUTH  GET .../get-environment-info/run -> 401
+    UNAUTH  GET .../get-user-info/run        -> 401
+    SUBSCR  GET .../get-site-info/run        -> 403 (butuh manage_options)
+    SUBSCR  GET .../get-environment-info/run -> 403
+    SUBSCR  GET .../get-user-info/run        -> 200, keys = id,display_name,
+      user_nicename,user_login,roles,locale,first_name,last_name,nickname,
+      description,user_url. user_pass:no  email:no.
+    UJI PIVOT (subscriber kirim user_id=1,id=1) -> tetap balik login SENDIRI
+      ('idor_sub'), BUKAN admin. execute_callback pakai wp_get_current_user();
+      input additionalProperties:false -> parameter asing diabaikan. TAK ADA IDOR.
+  Catatan metode: 3 ability core semua readonly -> endpoint minta GET (POST=405
+    rest_ability_invalid_method via validate_request_method). Perbaikan dari
+    iterasi sebelumnya yang keliru pakai POST.
+
+G3. Widget instance unserialize() x2 — object injection  [SAFE]
+--------------------------------------------------------------------------------
+  Sink: class-wp-rest-widget-types-controller.php:498 & widgets-controller.php:589
+    `unserialize( base64_decode($request['instance']['encoded']) )`.
+  Guard: didahului hash_equals( wp_hash($serialized), $request['instance']['hash'] ).
+    wp_hash = HMAC dgn secret salt situs -> blob TIDAK bisa dipalsukan attacker.
+    Plus permission edit_theme_options (admin). Double-gated. POP gadget mustahil
+    dicapai unauth/subscriber.
+
+G4. icons REST controller  [SAFE]
+--------------------------------------------------------------------------------
+  get_items_permissions_check butuh edit_posts -> unauth/subscriber 401.
+  get_item (single) permission=true tapi hanya kembalikan markup SVG statis
+    terdaftar (aset publik, non-sensitif). By-design.
+
+G5. ai-client HTTP client  [SAFE / tidak ter-reach]
+--------------------------------------------------------------------------------
+  Diff hanya kosmetik (format pesan error tambah %s method). Tidak ter-wire ke
+    REST/abilities publik -> tidak reachable unauth/subscriber.
+
+G6. Sink berbahaya lain (scan diff)  [SAFE]
+--------------------------------------------------------------------------------
+  eval/assert/create_function/proc_open/shell_exec: nihil di jalur request core
+    (hanya popen di PHPMailer sendmail + assert PHPStan di SimplePie).
+  preg_replace: tak ada modifier /e.
+  REST anonim komentar: create_item_permissions_check -> filter
+    rest_allow_anonymous_comments DEFAULT false -> unauth 401 (live-confirmed),
+    independen dari comment_registration. Jalur unauth nyata = wp-comments-post.php
+    (sanitasi author _wp_specialchars + konten kses, sudah diverifikasi).
+
+KESIMPULAN [G]: seluruh kode yang BERUBAH 7.0.3->7.1 dan reachable dari
+unauth/subscriber telah ditelaah dari file + PoC runtime. Tidak ditemukan
+kerentanan exploitable baru. Abilities API (subsistem paling baru) terbukti
+robust termasuk uji pivot aktif yang gagal. Temuan by-design F1/F2/F3 tetap.
