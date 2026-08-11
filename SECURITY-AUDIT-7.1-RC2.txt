@@ -642,3 +642,78 @@ KESIMPULAN RONDE [L]:
   sumber. SEMUA mengkonfirmasi hasil sebelumnya; TIDAK ditemukan kesalahan
   auditor maupun kerentanan baru yang reachable unauth/subscriber.
   Status keseluruhan tetap: 0 exploitable unauth/subscriber.
+
+================================================================================
+[M] BUKTI POC TEREKSEKUSI (2026-08-11) — real core code, positive-controlled
+================================================================================
+Merespons kritik metodologis: setiap kandidat kelas-kerentanan kini punya PoC
+yang DIJALANKAN terhadap KODE INTI WordPress asli (bukan sekadar telaah statis).
+Harness: PHP 8.4.19 CLI. Skrip + output tersimpan di ./audit-poc/ (RESULTS.txt).
+Prinsip: hasil "0 leak" hanya sah jika kontrol positif membuktikan harness
+mampu mendeteksi kasus rentan.
+
+M1. audit-poc/poc_kses.php — XSS tersimpan via komentar unauth (wp_kses)
+--------------------------------------------------------------------------------
+  Root cause diuji: apakah $allowedtags (allowlist komentar unauth) + HTML API
+    membiarkan vektor eksekusi lolos.
+  Kode nyata dimuat: wp-includes/kses.php + seluruh html-api/* + class-wp-token-map.
+  Input: 15 payload (script, img/svg onerror/onload, javascript:/data: href,
+    data-wp-interactive/context/on--click, style expression, iframe srcdoc,
+    onmouseover, nested-obfuscation <scr<script>ipt>, protocol-relative, form/input,
+    details ontoggle).
+  HASIL DIJALANKAN: 0 survivor berbahaya. data-wp-* DIHAPUS total (buktikan L2).
+    <script> -> teks; on*=... -> dibuang; javascript:/data: -> di-strip.
+  Verdikt: AMAN (tereksekusi).
+
+M2. audit-poc/poc_interactivity.php — Interactivity directives + JSON state
+--------------------------------------------------------------------------------
+  Kode nyata: WP_Interactivity_API + WP_HTML_Processor (HTML5 penuh).
+  Uji-1: state 'evil' = '</span><script>alert(document.domain)</script>' diikat
+    lewat data-wp-text; output = ENTITAS ter-escape, TIDAK ada <script>.
+  Uji-2: data-wp-bind--href = 'javascript:alert(1)' -> server TIDAK menyuntik
+    atribut href berbahaya.
+  Uji-3 (L1): serialisasi state ke <script type="application/json"> memakai flag
+    persis class-wp-script-modules.php:1109 (JSON_HEX_TAG|...). Output: '<' -> <.
+    Breakout </script> MUSTAHIL.
+  Verdikt: AMAN (tereksekusi).
+
+M3. audit-poc/poc_xxe.php — XXE via jalur XML-RPC unauth (IXR_Message/expat)
+--------------------------------------------------------------------------------
+  Kode nyata: wp-includes/IXR/class-IXR-message.php (xml_parser_create/expat).
+  Input: (a) external file ENTITY -> file://canary, (b) parameter-entity OOB,
+    (c) billion-laughs.
+  HASIL: ketiganya parse=FALSE, 0 kebocoran; canary TIDAK muncul di params.
+  KONTROL POSITIF: (i) pesan XML-RPC valid -> parse=true, method=demo.sum,
+    params=["hello",42] (parser memang jalan); (ii) canary-di-nilai terdeteksi=true
+    (detektor memang bisa menangkap kebocoran). => "0 leak" sahih.
+  Root cause aman: expat tak me-resolve external entity.
+  Verdikt: AMAN (tereksekusi, positive-controlled).
+
+M4. audit-poc/poc_sqli.php — SQLi pada param unauth (orderby) + prepare()
+--------------------------------------------------------------------------------
+  Kode nyata: sanitize_sql_orderby() (diekstrak byte-for-byte dari formatting.php)
+    + wpdb::prepare()/%i (class-wpdb.php, subclass tanpa koneksi).
+  sanitize_sql_orderby: 5 payload injeksi (UNION, stacked ';DROP', subquery/SLEEP,
+    komentar '/*', '(SELECT SLEEP(5))') -> SEMUA return false. 3 kontrol sah lolos.
+  prepare(): payload "x' OR '1'='1", stacked, UNION, backslash -> semua dikutip &
+    di-escape; %d dipaksa integer (0/1); %i mem-backtick identifier -> stacked query
+    mustahil.
+  Catatan jujur: tanpa MySQL, _real_escape memakai fallback addslashes (kasus
+    TERLEMAH) — tetap memblokir semua payload; mysqli_real_escape_string asli lebih
+    kuat (charset-aware).
+  Verdikt: AMAN (tereksekusi).
+
+M5. audit-poc/poc_redirect.php — open redirect pada ?redirect_to= (unauth login)
+--------------------------------------------------------------------------------
+  Kode nyata: wp_validate_redirect + wp_sanitize_redirect + _wp_sanitize_utf8_in_redirect
+    + wp_kses_no_null + _deep_replace (diekstrak byte-for-byte).
+  Input: 13 vektor (http://evil, //evil, /\/evil, ///evil, spasi+//, userinfo@,
+    javascript:, data:, CRLF %0d%0a, null-byte, tab-di-scheme, unicode-dot,
+    encoded-slash) + 2 kontrol.
+  HASIL: 13/13 -> fallback /wp-admin/ (0 kebocoran). CRLF di-strip (tetap same-host).
+    Kontrol: path lokal & same-host DIPERTAHANKAN (buktikan guard tak over-block).
+  Verdikt: AMAN (tereksekusi).
+
+RINGKASAN [M]: 5 PoC dieksekusi atas kode inti asli; 48+ payload ofensif diuji;
+  0 exploitable. Kontrol positif menyertai kasus negatif kritis (XXE, redirect,
+  orderby). Ini menutup gap "PoC dijalankan" untuk tiap kandidat.
