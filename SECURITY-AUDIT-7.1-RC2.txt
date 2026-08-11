@@ -213,3 +213,69 @@ CATATAN PENUTUP UNTUK ASESOR
 Dihasilkan oleh sesi audit Claude Code. Untuk asesmen manual — verifikasi
 silang tiap baris disarankan.
 ================================================================================
+
+================================================================================
+[F] TEMUAN REACHABLE UNAUTHENTICATED / SUBSCRIBER (iterasi terarah)
+================================================================================
+Metode: enumerasi permukaan unauth (10 REST route publik, 0 nopriv-AJAX,
+xmlrpc, wp-trackback, wp-login, wp-cron, pingback) + PoC dijalankan + kontrol
+positif. Semua temuan BY-DESIGN, low-medium severity, identik semua versi WP.
+
+F1. XML-RPC system.multicall — amplifikasi brute-force (UNAUTH)  [VERIFIED]
+--------------------------------------------------------------------------------
+  Root cause: IXR-server.php:205 hanya memblokir multicall REKURSIF, tidak
+    memblokir bundel wp.getUsersBlogs (tiap panggilan = 1 percobaan login via
+    wp_authenticate, class-wp-xmlrpc-server.php:308). Tak ada rate-limit core.
+  PoC (dijalankan, HTTP nyata port 8090):
+    - 20 password distinct dalam 1 request multicall -> 20 sub-respons (4467 B).
+    - Kontrol positif: password BENAR -> <isAdmin>1</isAdmin> (sukses oracle),
+      salah -> faultCode 403 "Incorrect username or password".
+  Exploitable: YA, unauth. Bypass rate-limiter per-HTTP-request (fail2ban lihat
+    1 request, bukan 20). Juga vektor DoS amplifikasi.
+  Evidence: 1 request HTTP -> 20 pemeriksaan kredensial, tiap hasil terbedakan.
+  Status: BY-DESIGN. IXR multicall byte-identik 7.0.3. Mitigasi = disable
+    xmlrpc / plugin / host (posisi resmi WordPress).
+  Anomali dicatat: multicall dgn password benar berulang kadang hanya 1 sukses
+    (kemungkinan stale $this->error state antar sub-call = mitigasi tak sengaja).
+
+F2. Username enumeration via pesan error login (UNAUTH)  [VERIFIED]
+--------------------------------------------------------------------------------
+  Root cause: user.php:188 "The username X is not registered" (user TIDAK ada)
+    vs user.php:215 "The password you entered for the username X is incorrect"
+    (user ADA). Pesan berbeda = oracle.
+  PoC (live): admin -> pesan-password (ada); nouser_xyz -> pesan-username
+    (tidak ada); idor_author -> pesan-password (ada).
+  Exploitable: YA, unauth. Bedakan username valid/invalid.
+  Status: BY-DESIGN (usability). Filter 'login_errors' (wp-login.php:280) bisa
+    menyeragamkan, tapi DEFAULT membocorkan. Sekelas dgn enum author-archive &
+    REST /wp/v2/users & oembed author_name. WordPress: username bukan rahasia.
+
+F3. Pingback external SSRF (UNAUTH)  [VERIFIED]
+--------------------------------------------------------------------------------
+  Root cause: pingback.ping (xmlrpc) memanggil wp_safe_remote_get atas
+    sourceURI attacker. Internal/metadata DIBLOKIR wp_http_validate_url, tapi
+    host EKSTERNAL diizinkan (inheren utk pingback).
+  PoC: pingback ke 127.0.0.1:9999 -> TAK ADA outbound (internal blokir).
+    wp_http_validate_url("8.8.8.8") -> LOLOS (eksternal). Situs bisa dipaksa
+    GET ke host eksternal arbitrer (port scan eksternal / blind GET proxy).
+  Exploitable: terbatas. Eksternal-saja, blind-ish (hanya ungkap apakah target
+    memuat link balik). Internal/cloud-metadata AMAN (F lihat [D]).
+  Status: BY-DESIGN. Pertahanan internal-IP + revalidasi redirect (lihat [D]).
+
+--- VERIFIED SAFE terhadap unauth/subscriber (false-positive dieliminasi) ---
+  - Abilities API (/wp-abilities/v1): unauth 401 semua; subscriber HANYA
+    core/get-user-info (data DIRI SENDIRI, tanpa user_pass, tanpa pivot user_id);
+    env-info/site-info butuh manage_options. 5 PoC.
+  - REST /batch/v1: per-subrequest auth (create-admin -> 401); limit 25.
+  - REST /oembed/1.0/embed: post privat/draft -> 404 (tak bocor).
+  - REST /wp/v2/types ctx=edit: 401. /wp/v2/search: post privat tak bocor.
+  - IDOR lintas-objek (subscriber): 8/8 ditolak (rest_cannot_edit/delete/
+    forbidden_context) + kontrol positif (edit post sendiri -> 200).
+  - Privilege escalation (subscriber): role field -> rest_cannot_edit_roles;
+    wp_capabilities meta tak REST-writable; + kontrol positif (admin promote OK).
+  - Stored XSS blok baru (playlist/tabs) via author low-priv: kses MELUCUTI
+    atribut JSON jahat & onerror saat simpan (kontrol positif: author dilucuti,
+    admin bertahan via unfiltered_html). Escaper blok = lapis kedua.
+  - wp-trackback.php: sanitize_url/text/textarea + charset whitelist
+    mb_list_encodings + UTF-7 blokir; tb_id (int); DB prepare %d/%s.
+  - wp-cron.php: unauth by-design, ter-lock transient doing_cron.
