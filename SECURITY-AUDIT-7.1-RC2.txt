@@ -419,3 +419,65 @@ KESIMPULAN [H]: seluruh kategori OWASP Top 10 yang relevan untuk core code &
 reachable unauth/subscriber telah diverifikasi dengan PoC runtime. Tidak ada
 temuan exploitable baru. Kategori yang menghasilkan temuan tetap by-design
 (A07 enum & A07 brute-amplif & A10 SSRF = F1/F2/F3/D/E).
+
+================================================================================
+[I] BURU ANOMALI — sink tak-normal / deviasi dari pola kode aman WordPress
+================================================================================
+Metode: cari tempat di mana 7.1 MENYIMPANG dari pola konsisten WP (bukan cari
+pola normal). Sinyal: escaping DIHAPUS di diff, superglobal langsung ke sink,
+perbandingan rahasia longgar, format-string variabel, RNG lemah utk rahasia,
+SSRF URL request. Fokus reachable unauth/subscriber.
+
+I1. Regresi "escaping dihapus" 7.0.3->7.1  [3 kandidat, semua FALSE POSITIVE]
+--------------------------------------------------------------------------------
+  - class-wp-ability.php: esc_html($this->name) hilang dari 3 pesan WP_Error
+    (628/676/838), TAPI sink HTML _doing_it_wrong (193) MASIH esc_html. Pesan
+    WP_Error konvensi WP = tak di-pra-escape (di-escape saat display / JSON REST).
+    $this->name = nama ability terdaftar server-side, BUKAN input attacker.
+  - abilities-v1-list-controller.php: 'sanitize_callback'=>true JADI
+    'sanitize_key' -> justru DIPERKETAT (bukan regresi).
+  - script-loader.php: echo "<script src='".esc_attr($src)."'>" JADI
+    wp_print_script_tag(array('src'=>$src)) -> helper kanonik yang meng-escape.
+  Vonis: tidak ada escaping yang benar-benar hilang. False positive.
+
+I2. Superglobal langsung ke sink output  [2 kandidat]
+--------------------------------------------------------------------------------
+  - legacy-widget.php:142 `echo $block->render($_GET['legacy-widget-preview'])`
+    SINK TAK NORMAL (superglobal mentah). TAPI di-gate current_user_can(
+    'edit_theme_options') = ADMIN. Tak reachable unauth/subscriber. Admin sudah
+    unfiltered_html -> self-XSS, bukan lintas batas privilege. By-design.
+  - loginout.php:24 `$current_url = ...$_SERVER['REQUEST_URI']` (blok frontend,
+    UNAUTH-reachable). Root cause dugaan: REQUEST_URI attacker -> href reflektif.
+    PoC (dijalankan, current_user=0, REQUEST_URI='/page/?z="><script>alert(
+    document.domain)</script>'): ketiga jalur (loginout link/form, wp_login_form)
+    -> payload TER-URL-ENCODE penuh di redirect_to (%22%3E%3Cscript%3E...), 0
+    '<' atau '"' mentah. Dinetralkan wp_loginout->esc_url(wp_login_url()).
+    Vonis: AMAN (bukti runtime).
+
+I3. add_query_arg/remove_query_arg reflektif tanpa esc_url  [SAFE]
+--------------------------------------------------------------------------------
+  Semua kemunculan di-assign lalu di-esc saat output, atau langsung
+  esc_html(add_query_arg()) (functions.php:1877). Tak ada echo mentah.
+
+I4. Perbandingan rahasia longgar (== bukan hash_equals)  [SAFE — nihil]
+I5. Format-string variabel (arg1 sprintf = var)  [SAFE]
+--------------------------------------------------------------------------------
+  Semua template sprintf = string i18n/lokal (protected_title_format dll),
+  bukan input request. PHP sprintf tak punya %n. Tak ada format-string vuln.
+I6. parse_str injeksi variabel  [SAFE — nihil]
+I7. RNG lemah utk rahasia  [SAFE]
+--------------------------------------------------------------------------------
+  wp_rand()/wp_generate_password pakai random_int() (CSPRNG). Kunci aktivasi
+  md5(time().wp_rand()) ambil entropi dari wp_rand (CSPRNG). class-wpdb.php:2418
+  `(string) rand()` HANYA fallback bila AUTH_SALT tak terdefinisi (instalasi
+  rusak), lalu tetap hash_hmac(uniqid($salt,true)) 256-bit. Byte-identik 7.0.3,
+  bukan input attacker, tak bisa diinjeksi ke prepare(). Benign.
+I8. SSRF via wp_remote_* (non-pingback)  [SAFE]
+--------------------------------------------------------------------------------
+  Semua target: api.wordpress.org (hardcoded update/pattern), URL cron situs
+  sendiri, atau $editor_styles (didaftarkan TEMA via add_editor_style, konteks
+  editor admin). Tak ada URL yang dikendalikan request unauth/subscriber.
+
+KESIMPULAN [I]: perburuan anomali (deviasi pola) menyeluruh. Dua sink tak-normal
+nyata (legacy-widget $_GET, loginout $_SERVER) keduanya gated-admin atau
+dinetralkan hilir (di-PoC). Tidak ada bug baru yang reachable unauth/subscriber.

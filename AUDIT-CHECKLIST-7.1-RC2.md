@@ -31,6 +31,11 @@ Legenda status: ✅ selesai-aman · 🔴 temuan (by-design/nyata) · 🔎 sedang
 | A08 | Software/Data Integrity | object injection (unserialize) | ✅ | [G3] HMAC+admin |
 | A08 | | POP gadget chain | ✅ | prior: __wakeup neutralized |
 | A10 | SSRF | pingback / HTTP validate | 🔴 | [D][F3] external-only by-design |
+| A10 | | wp_remote_* non-pingback | ✅ | [I8] hardcoded/tema/self, tak attacker |
+| — | Anomali (sink tak-normal) | escaping dihapus (diff) | ✅ | [I1] 3 kandidat false-positive |
+| — | | superglobal→echo mentah | ✅ | [I2] legacy-widget admin-gate; loginout encoded (PoC) |
+| — | | == rahasia longgar / format-string | ✅ | [I4][I5] nihil |
+| — | | RNG lemah utk rahasia | ✅ | [I7] wp_rand=CSPRNG; wpdb fallback benign |
 
 ## Log file yang sudah dibaca (ronde ini akan menambah)
 - lihat bagian [A]–[G] SECURITY-AUDIT-7.1-RC2.txt untuk file yang sudah ditelaah.
