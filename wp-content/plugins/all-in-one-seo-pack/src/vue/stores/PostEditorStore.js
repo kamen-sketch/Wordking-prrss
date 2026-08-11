@@ -1,0 +1,249 @@
+import { defineStore } from 'pinia'
+import http from '@/vue/utils/http'
+import links from '@/vue/utils/links'
+
+import { allowed } from '@/vue/utils/AIOSEO_VERSION'
+
+let cachedCurrentPost = null
+
+const prepareCachedCurrentPost = (currentPost) => {
+	// Ignore UI state and analysis-related properties at any nesting level.
+	const ignore = new Set([ 'modalOpen', 'seo_score', 'page_analysis', 'headlineAnalyzer', 'loading', 'score', 'analysis', 'ai' ])
+
+	return JSON.stringify(currentPost, (key, value) => ignore.has(key) ? undefined : value)
+}
+
+export const usePostEditorStore = defineStore('PostEditorStore', {
+	state : () => ({
+		isDirty            : false,
+		currentPost        : {},
+		isFetchingPostData : false
+	}),
+	getters : {
+		newHeadlineAnaylzerData () {
+			const newTitle = this.currentPost.headlineAnalyzer?.newData?.headline ? this.currentPost.headlineAnalyzer.newData.headline : ''
+			let newResult = this.currentPost.headlineAnalyzer?.newData?.data[Object.keys(this.currentPost.headlineAnalyzer.newData.data)?.[0]] ? this.currentPost.headlineAnalyzer.newData.data[Object.keys(this.currentPost.headlineAnalyzer.newData.data)?.[0]] : null
+		    newResult = newResult ? JSON.parse(newResult) : null
+
+			return {
+				newTitle,
+				newResult
+			}
+		}
+	},
+	actions : {
+		updateTitle (title) {
+			this.currentPost.title = title
+
+			window.aioseoBus.$emit('updateTitleKey')
+		},
+		updateDescription (description) {
+			this.currentPost.description = description
+
+			window.aioseoBus.$emit('updateDescriptionKey')
+		},
+		updatePostHeadlineAnalyzerData (data, headline) {
+			this.currentPost.headlineAnalyzer = this.currentPost.headlineAnalyzer || {}
+			this.currentPost.headlineAnalyzer.data = data
+			this.currentPost.headlineAnalyzer.headline = headline
+
+			if (!this.currentPost.headlineAnalyzer.previousHeadlines) {
+				this.currentPost.headlineAnalyzer.previousHeadlines = []
+			}
+
+			// Add previous scores but don't add duplicates
+			if (this.currentPost.headlineAnalyzer.data[Object.keys(this.currentPost.headlineAnalyzer.data)?.[0]]) {
+				let currentResult = this.currentPost.headlineAnalyzer.data[Object.keys(this.currentPost.headlineAnalyzer.data)?.[0]]
+				currentResult = JSON.parse(currentResult)
+
+				const headlineExists = this.currentPost.headlineAnalyzer.previousHeadlines.some(item => item.headline === headline)
+
+				if (!headlineExists) {
+					this.currentPost.headlineAnalyzer.previousHeadlines.push({
+						headline : headline,
+						result   : currentResult,
+						score    : currentResult.score
+					})
+
+					// save latest score
+					this.currentPost.headlineAnalyzer.latestScore = currentResult.score
+				}
+			}
+		},
+		updateLatestScore (score) {
+			this.currentPost.headlineAnalyzer.latestScore = score
+		},
+		shouldShowPrevScores () {
+			this.currentPost.headlineAnalyzer.showPrevScores = true
+		},
+		updateNewHeadlineAnalyzerData (data, headline) {
+			this.currentPost.headlineAnalyzer.newData = this.currentPost.headlineAnalyzer.newData || {}
+			this.currentPost.headlineAnalyzer.newData.data = data
+			this.currentPost.headlineAnalyzer.newData.headline = headline
+			this.currentPost.headlineAnalyzer.newData.showPreview = true
+
+			// Add new Headline tested data to the previous headlines list
+			if (!this.currentPost.headlineAnalyzer.previousHeadlines) {
+				this.currentPost.headlineAnalyzer.previousHeadlines = []
+			}
+
+			let currentResult = this.currentPost.headlineAnalyzer.newData.data[Object.keys(this.currentPost.headlineAnalyzer.newData.data)?.[0]]
+			currentResult = JSON.parse(currentResult)
+
+			const headlineExists = this.currentPost.headlineAnalyzer.previousHeadlines.some(item => item.headline === headline)
+
+			if (!headlineExists) {
+				this.currentPost.headlineAnalyzer.previousHeadlines.push({
+					headline : headline,
+					result   : currentResult,
+					score    : currentResult.score
+				})
+
+				// save latest score
+				this.currentPost.headlineAnalyzer.latestScore = currentResult.score
+			}
+		},
+		toggleShowNewHeadlineAnalyzerData (show) {
+			this.currentPost.headlineAnalyzer.showNewData = show
+		},
+		toggleShowNewHeadlineAnalyzerPreview (show) {
+			this.currentPost.headlineAnalyzer.newData.showPreview = show
+		},
+		changeGeneralPreview (value) {
+			this.currentPost.generalMobilePrev = value
+		},
+		saveCurrentPost (payload) {
+			// Must match PostsTerms::updatePosts (REST) — only aioseo_page_general_settings may persist.
+			if (!allowed('aioseo_page_general_settings')) {
+				return Promise.resolve(false)
+			}
+
+			this.currentPost = payload
+
+			return http.post(links.restUrl('post'))
+				.send(payload)
+				.then(() => true)
+				.catch((error) => {
+					console.error(`Unable to update the post data: ${error}`)
+
+					return false
+				})
+		},
+		updateState (value) {
+			this.currentPost = value
+		},
+		savePostState () {
+			// In some contexts, the state might not have loaded fully and still be an Observer object.
+			if (!this.currentPost || !Object.keys(this.currentPost).length) {
+				return
+			}
+
+			// Cache a stringified version the state.currentPost so we don't have a reference of the original state anymore.
+			if (null === cachedCurrentPost) {
+				cachedCurrentPost = prepareCachedCurrentPost(this.currentPost)
+			}
+
+			// If the currentPost changed, emit a global event.
+			if (cachedCurrentPost !== prepareCachedCurrentPost(this.currentPost)) {
+				this.isDirty = true
+
+				cachedCurrentPost = prepareCachedCurrentPost(this.currentPost)
+
+				window.aioseoBus.$emit('postSettingsUpdated')
+			}
+
+			const postField = document.querySelector('#aioseo-post-settings')
+			if (postField) {
+				postField.value = JSON.stringify(this.currentPost)
+			}
+			if ('term' === this.currentPost.context) {
+				const termField = document.querySelector('#aioseo-term-settings')
+				if (termField) {
+					termField.value = JSON.stringify(this.currentPost)
+				}
+			}
+		},
+		disablePrimaryTermEducation () {
+			if (!allowed('aioseo_page_general_settings')) {
+				return Promise.resolve()
+			}
+
+			this.currentPost.options.primaryTerm.productEducationDismissed = true
+
+			return http.post(links.restUrl(`post/${this.currentPost.id}/disable-primary-term-education`))
+		},
+		disableLinkAssistantEducation () {
+			if (!allowed('aioseo_page_general_settings')) {
+				return Promise.resolve()
+			}
+
+			this.currentPost.options.linkFormat.linkAssistantDismissed = true
+
+			return http.post(links.restUrl(`post/${this.currentPost.id}/disable-link-format-education`))
+		},
+		incrementInternalLinkCount () {
+			if (!allowed('aioseo_page_general_settings')) {
+				return Promise.resolve()
+			}
+
+			const count = this.currentPost.options.linkFormat.internalLinkCount || 0
+
+			this.currentPost.options.linkFormat.internalLinkCount = count + 1
+
+			return http.post(links.restUrl(`post/${this.currentPost.id}/update-internal-link-count`))
+				.send({
+					count
+				})
+		},
+		getUserImage ({ userId }) {
+			if (!allowed('aioseo_page_social_settings')) {
+				return Promise.resolve('')
+			}
+
+			return http.get(links.restUrl(`user/${userId}/image`))
+				.then(response => 200 === response.statusCode ? response.body.url : '')
+		},
+		getFirstAttachedImage ({ postId }) {
+			if (!allowed('aioseo_page_social_settings')) {
+				return Promise.resolve('')
+			}
+
+			return http.get(links.restUrl(`post/${postId}/first-attached-image`))
+				.then(response => 200 === response.statusCode ? response.body.url : '')
+		},
+		getMediaData ({ mediaId }) {
+			return http.get(links.restUrl(`media/${mediaId}`, 'wp/v2'))
+				.then(response => 200 === response.statusCode ? response.body : {})
+		},
+		processContent ({ content, integration }) {
+			if (!allowed('aioseo_page_general_settings')) {
+				return Promise.resolve()
+			}
+
+			return http.post(links.restUrl(`post/${this.currentPost.id}/process-content`))
+				.send({
+					content,
+					integration
+				})
+				.then(response => {
+					this.currentPost.processedContent = response.body.content
+				})
+				.catch(error => {
+					throw error
+				})
+		},
+		fetchPostData (payload = {}) {
+			this.isFetchingPostData = true
+
+			return http.get(links.restUrl('post'))
+				.query(payload)
+				.then(response => response)
+				.catch(error => {
+					throw error
+				})
+				.finally(() => {
+					this.isFetchingPostData = false
+				})
+		}
+	}
+})

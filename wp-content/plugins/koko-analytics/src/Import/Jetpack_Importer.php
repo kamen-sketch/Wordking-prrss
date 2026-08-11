@@ -1,0 +1,248 @@
+<?php
+
+/**
+ * @package koko-analytics
+ * @license GPL-3.0+
+ * @author Danny van Kooten
+ */
+
+namespace KokoAnalytics\Import;
+
+use WP_Error;
+use Exception;
+use DateTimeImmutable;
+use KokoAnalytics\Upserter;
+
+class Jetpack_Importer extends Importer
+{
+    protected function get_admin_url(): string
+    {
+        return admin_url('options-general.php?page=koko-analytics-settings&tab=jetpack_importer');
+    }
+
+    public function start_import(): void
+    {
+        // authorize user & verify nonce
+        if (!current_user_can('manage_koko_analytics') || ! check_admin_referer('koko_analytics_start_jetpack_import')) {
+            return;
+        }
+
+        // save params
+        $params = [
+            'wpcom-api-key' => trim(wp_unslash($_POST['wpcom-api-key'] ?? '')),
+            'wpcom-blog-uri' => trim(wp_unslash($_POST['wpcom-blog-uri'] ?? '')),
+            'date-start' => trim(wp_unslash($_POST['date-start'] ?? '')),
+            'date-end' => trim(wp_unslash($_POST['date-end'] ?? '')),
+        ];
+
+        // all params are required
+        if ($params['wpcom-api-key'] === '' || $params['wpcom-blog-uri'] === '' || $params['date-start'] === '' || $params['date-end'] === '') {
+            $this->redirect_with_error($this->get_admin_url(), __('A required field was missing', 'koko-analytics'));
+        }
+
+        // first chunk is 30 days after date-start
+        try {
+            $date_start = new DateTimeImmutable($params['date-start']);
+            $date_end   = new DateTimeImmutable($params['date-end']);
+            if ($date_end < $date_start) {
+                throw new Exception("End date must be after start date");
+            }
+        } catch (Exception $e) {
+            $this->redirect_with_error($this->get_admin_url(), __('Invalid date fields', 'koko-analytics'));
+            exit;
+        }
+
+        // params are valid; let's go!
+        update_option('koko_analytics_jetpack_import_params', $params, false);
+
+        // work backwards from end date, so most recent stats first
+        $chunk_end = $date_end;
+
+        // determine size of each chunk to pull in and clamp it between 1 and supplied chunk size
+        $max_chunk_size = isset($_GET['chunk-size']) ? (int) $_GET['chunk-size'] : 30;
+        $chunk_size     = \max(1, \min($max_chunk_size, $date_end->diff($date_start)->days));
+
+        // redirect to first chunk
+        wp_safe_redirect(add_query_arg(['koko_analytics_action' => 'jetpack_import_chunk', 'chunk_size' => $chunk_size, 'chunk_end' => $chunk_end->format('Y-m-d'), '_wpnonce' => wp_create_nonce('koko_analytics_jetpack_import_chunk')]));
+        exit;
+    }
+
+    public function import_chunk(): void
+    {
+        // authorize
+        if (!current_user_can('manage_koko_analytics')) {
+            return;
+        }
+
+        // verify nonce
+        check_admin_referer('koko_analytics_jetpack_import_chunk');
+
+        // get params
+        $params = get_option('koko_analytics_jetpack_import_params');
+        if (!$params) {
+            $error_message = __('Missing parameters.', 'koko-analytics');
+            $this->redirect_with_error($this->get_admin_url(), $error_message);
+            exit;
+        }
+
+        $chunk_end  = trim(wp_unslash($_GET['chunk_end'] ?? ''));
+        $chunk_size = (int) trim(wp_unslash($_GET['chunk_size'] ?? ''));
+        $date_start = new DateTimeImmutable($params['date-start']);
+        $chunk_end  = new DateTimeImmutable($chunk_end);
+
+        // calculate next chunk end date and actual size of current chunk
+        $next_chunk_end = $chunk_end->modify("-{$chunk_size} days");
+        if ($next_chunk_end < $date_start) {
+            $chunk_size = max(1, $chunk_end->diff($date_start)->days);
+        }
+
+        // import this chunk
+        try {
+            $this->perform_chunk_import($params['wpcom-api-key'], $params['wpcom-blog-uri'], $chunk_end, $chunk_size);
+        } catch (Exception $e) {
+            // clean-up after ourselves
+            delete_option('koko_analytics_jetpack_import_params');
+
+            // redirect to form page
+            $this->redirect_with_error($this->get_admin_url(), $e->getMessage());
+            exit;
+        }
+
+        // If we're done, redirect to success page
+        if ($next_chunk_end < $date_start) {
+            delete_option('koko_analytics_jetpack_import_params');
+            $this->redirect($this->get_admin_url(), ['success' => 1]);
+            exit;
+        }
+
+        $url = add_query_arg(['koko_analytics_action' => 'jetpack_import_chunk', 'chunk_size' => $chunk_size, 'chunk_end' => $next_chunk_end->format('Y-m-d'), '_wpnonce' => wp_create_nonce('koko_analytics_jetpack_import_chunk')]);
+
+        $chunk_start = $chunk_end->modify("-{$chunk_size} days");
+        $chunks_left = ceil($chunk_end->diff($date_start)->days / $chunk_size);
+
+        // we could do a wp_safe_redirect() here
+        // but instead we send some HTML to the client and perform a client-side redirect just so the user knows we're still alive and working
+        ?>
+        <style>
+            body {
+                background: #f0f0f1;
+                color: #3c434a;
+                font-family: sans-serif;
+                font-size: 16px;
+                line-height: 1.5;
+                padding: 32px;
+            }
+        </style>
+        <meta http-equiv="refresh" content="1; url=<?php echo esc_attr($url); ?>">
+        <h1><?php esc_html_e('Liberating your data... Please wait.', 'koko-analytics'); ?></h1>
+        <p>
+            <?php
+            echo wp_kses(sprintf(
+                /* translators: 1: import start date, 2: import end date. */
+                __('Importing stats between %1$s and %2$s.', 'koko-analytics'),
+                '<strong>' . esc_html($chunk_start->format('Y-m-d')) . '</strong>',
+                '<strong>' . esc_html($chunk_end->format('Y-m-d')) . '</strong>'
+            ), ['strong' => []]);
+            ?>
+        </p>
+        <p><?php esc_html_e('Please do not close this browser tab while the importer is running.', 'koko-analytics'); ?></p>
+        <?php /* translators: %s: estimated number of seconds remaining. */ ?>
+        <p><?php printf(esc_html__('Estimated time left: %s seconds.', 'koko-analytics'), esc_html((string) round($chunks_left * 1.5))); ?></p>
+        <?php
+        exit;
+    }
+
+    public function perform_chunk_import(string $api_key, string $blog_uri, DateTimeImmutable $date_end, int $chunk_size): void
+    {
+        @set_time_limit(90);
+
+        $api_key  = urlencode($api_key);
+        $blog_uri = urlencode($blog_uri);
+        $end      = urlencode($date_end->format('Y-m-d'));
+        $url      = "https://stats.wordpress.com/csv.php?api_key={$api_key}&blog_uri={$blog_uri}&end={$end}&table=postviews&format=json&days={$chunk_size}&limit=-1";
+        $response = wp_remote_post($url, [
+            'timeout' => 90,
+        ]);
+
+        if ($response instanceof WP_Error) {
+            $code    = $response->get_error_code();
+            $message = $response->get_error_message();
+            throw new Exception(esc_html__('Error making remote request to the WordPress.com API:', 'koko-analytics') . esc_html(" \n\n{$code} {$message}"));
+        }
+
+        $status_code = wp_remote_retrieve_response_code($response);
+        if ($status_code >= 400) {
+            $message = wp_remote_retrieve_response_message($response);
+            $body    = wp_remote_retrieve_body($response);
+            throw new Exception(esc_html__('Received error response from WordPress.com API:', 'koko-analytics') . esc_html(" \n\n{$status_code} {$message}\n\n{$body}"));
+        }
+
+        $body = wp_remote_retrieve_body($response);
+        try {
+            $data = json_decode($body, null, 512, JSON_THROW_ON_ERROR);
+        } catch (Exception $e) {
+            throw new Exception(esc_html__('Received non-JSON response from WordPress.com API:', 'koko-analytics') . nl2br("\n\n" . esc_html($body)));
+        }
+
+        // API returns `null` for no data between two given dates
+        // Let's turn it into an array instead
+        if ($data === null) {
+            $data = [];
+        }
+
+        // We now have an array of days in the following format:
+        // [ [ "date" => "2020-10-31", "postviews" => [ [ "post_id" => 1, "views" => 2 ] ] ] ]
+
+        /** @var \wpdb $wpdb */
+        global $wpdb;
+
+        $upserter = new Upserter('paths', 'path');
+
+        foreach ($data as $item) {
+            $site_views = 0;
+
+            // if there were no stats for this date, simply skip
+            if (count($item->postviews) === 0) {
+                continue;
+            }
+
+            // add "path" property to all items
+            $item->postviews = array_map(function ($postviews) {
+                $permalink = get_permalink($postviews->post_id);
+                if (!$permalink) {
+                    $postviews->path = '/?p=' . $postviews->post_id;
+                } else {
+                    $postviews->path = parse_url($permalink, PHP_URL_PATH);
+                }
+                return $postviews;
+            }, $item->postviews);
+
+            // create array of just paths
+            $paths = array_column($item->postviews, 'path');
+
+            // upsert paths into database and retrieve map with ID's
+            $path_map = $upserter->upsert($paths);
+
+            // update post stats for this date in a single bulk query
+            $placeholders = rtrim(str_repeat('(%s,%d,%d,%d,%d),', count($item->postviews)), ',');
+            $values       = [];
+            foreach ($item->postviews as $postviews) {
+                $site_views += $postviews->views;
+                $path_id     = $path_map[$postviews->path];
+                array_push($values, $item->date, $path_id, $postviews->post_id, $postviews->views, $postviews->views);
+            }
+
+            // phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared
+            $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->prefix}koko_analytics_post_stats(date, path_id, post_id, visitors, pageviews) VALUES {$placeholders} ON DUPLICATE KEY UPDATE visitors = visitors + VALUES(visitors), pageviews = pageviews + VALUES(pageviews)", $values));
+            if ($wpdb->last_error) {
+                throw new Exception(esc_html__("A database error occurred: ", 'koko-analytics') . esc_html(" {$wpdb->last_error}"));
+            }
+
+            // update site stats
+            $wpdb->query($wpdb->prepare("INSERT INTO {$wpdb->prefix}koko_analytics_site_stats(date, visitors, pageviews) VALUES (%s, %d, %d) ON DUPLICATE KEY UPDATE visitors = visitors + VALUES(visitors), pageviews = pageviews + VALUES(pageviews)", [$item->date, $site_views, $site_views]));
+            if ($wpdb->last_error) { // @phpstan-ignore-line
+                throw new Exception(esc_html__("A database error occurred: ", 'koko-analytics') . esc_html(" {$wpdb->last_error}"));
+            }
+        }
+    }
+}

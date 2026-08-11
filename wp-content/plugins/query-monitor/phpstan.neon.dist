@@ -1,0 +1,57 @@
+includes:
+	- vendor/phpstan/phpstan-phpunit/extension.neon
+	- vendor/szepeviktor/phpstan-wordpress/extension.neon
+	- vendor/johnbillion/plugin-infrastructure/phpstan/extension.neon
+	- vendor/johnbillion/wp-compat/extension.neon
+	- vendor/phpstan/phpstan-deprecation-rules/rules.neon
+parameters:
+	level: 7
+	paths:
+		- query-monitor.php
+		- classes/
+		- collectors/
+		- dispatchers/
+		- output/
+		- tests/acceptance/
+		- tests/integration/
+		- wp-content/
+	scanFiles:
+		- %rootDir%/../../php-stubs/wp-cli-stubs/wp-cli-stubs.php
+	scanDirectories:
+		- vendor/wp-phpunit/wp-phpunit/includes/
+	excludePaths:
+		analyse:
+			- tests/integration/Supports/
+		analyseAndScan:
+			- vendor/yoast/wp-test-utils/src/BrainMonkey/bootstrap.php
+	bootstrapFiles:
+		- tests/phpstan/stubs.php
+	dynamicConstantNames:
+		- COOKIE_DOMAIN
+		- WP_INSTALLING
+	universalObjectCratesClasses:
+		- QM_Data_Fallback
+	ignoreErrors:
+		# The `wpdb` class exposes its properties via `__get()`
+		- '#^Access to protected property wpdb::#'
+		# Properties in QM_Data* classes are nullable
+		- '#^Property QM_Data_.+ is not nullable\.$#'
+		# Test factory methods return int|WP_Error but we know they succeed in tests
+		-
+			path: tests/integration/*
+			message: '#int\|WP_Error given#'
+		# WP constants are used intentionally in early-loading contexts
+		-
+			identifier: phpstanWP.wpConstant.fetch
+		# Forward compatibility with newer WP versions
+		-
+			identifier: WPCompat.actionNotAvailable.deprecatedclassrun
+		-
+			identifier: WPCompat.filterNotAvailable.deprecatedclasstriggererror
+		-
+			identifier: WPCompat.filterNotAvailable.loadtranslationfile
+		# setAccessible() is deprecated in PHP 8.4+ but needed for PHP < 8.1
+		-
+			identifier: method.deprecated
+			message: '#setAccessible#'
+			reportUnmatched: false

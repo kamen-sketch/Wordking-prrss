@@ -1,0 +1,45 @@
+{
+  "require": {
+    "php": ">=7.4",
+    "geoip2/geoip2": "^2.13.0",
+    "matomo/device-detector": "^6.3"
+  },
+  "config": {
+    "platform-check": false,
+    "platform": {
+      "php": "7.4"
+    }
+  },
+  "autoload": {
+    "psr-4": {
+      "WP_Statistics\\": "src/"
+    }
+  },
+  "extra": {
+    "mozart": {
+      "dep_namespace": "WP_Statistics\\Dependencies\\",
+      "dep_directory": "/src/Dependencies/",
+      "classmap_directory": "/src/",
+      "classmap_prefix": "WP_Statistics_",
+      "packages": [
+        "geoip2/geoip2",
+        "psr/cache",
+        "matomo/device-detector"
+      ],
+      "delete_vendor_directories": true
+    }
+  },
+  "scripts": {
+    "test": [
+      "PATH=$(composer global config bin-dir --absolute --quiet):$PATH phpunit --testdox"
+    ],
+    "post-install-cmd": [
+      "PATH=$(composer global config bin-dir --absolute --quiet):$PATH mozart compose",
+      "composer dump-autoload"
+    ],
+    "post-update-cmd": [
+      "PATH=$(composer global config bin-dir --absolute --quiet):$PATH mozart compose",
+      "composer dump-autoload"
+    ]
+  }
+}

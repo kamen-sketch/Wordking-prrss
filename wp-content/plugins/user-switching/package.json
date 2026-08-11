@@ -1,0 +1,29 @@
+{
+	"name": "user-switching",
+	"version": "1.12.1",
+	"description": "Instant switching between user accounts in WordPress and WooCommerce.",
+	"license": "GPL-2.0-or-later",
+	"private": true,
+	"author": "John Blackbourn",
+	"repository": "johnbillion/user-switching",
+	"homepage": "https://github.com/johnbillion/user-switching",
+	"engines": {
+		"node": ">=24"
+	},
+	"type": "module",
+	"devDependencies": {
+		"@johnbillion/plugin-infrastructure": "2.9.4",
+		"@jsdevtools/version-bump-prompt": "^6.1.0",
+		"@playwright/test": "^1.55.0",
+		"@types/node": "^24.3.0",
+		"sharp-cli": "^5.2.0",
+		"typescript": "^5.9.2"
+	},
+	"scripts": {
+		"icons": "sharp -i .wordpress-org/icon.svg -o .wordpress-org/icon-128x128.png -f png --palette resize 128 128 && sharp -i .wordpress-org/icon.svg -o .wordpress-org/icon-256x256.png -f png --palette resize 256 256",
+		"version": "npm install # See https://github.com/JS-DevTools/version-bump-prompt/issues/42",
+		"bump:patch": "bump patch --commit 'Version %s.' --tag '%s' user-switching.php package.json package-lock.json readme.txt",
+		"bump:minor": "bump minor --commit 'Version %s.' --tag '%s' user-switching.php package.json package-lock.json readme.txt",
+		"bump:major": "bump major --commit 'Version %s.' --tag '%s' user-switching.php package.json package-lock.json readme.txt"
+	}
+}

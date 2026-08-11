@@ -1,0 +1,54 @@
+<?php
+
+namespace KokoAnalytics\Normalizers;
+
+class Path
+{
+    public static function get_allowed_query_vars(): array
+    {
+        // TODO: Should we allow "s" here?
+        if (get_option('permalink_structure', false)) {
+            $allowed_query_vars = [];
+        } else {
+            $allowed_query_vars = ['page_id', 'p', 'tag', 'cat', 'product', 'attachment_id'];
+        }
+
+        return apply_filters('koko_analytics_allowed_query_vars', $allowed_query_vars);
+    }
+
+    public static function normalize(string $value): string
+    {
+        // remove # from URL
+        $pos = strpos($value, '#');
+        if ($pos !== false) {
+            $value = substr($value, 0, $pos);
+        }
+
+        // if URL contains query string, parse it and only keep certain parameters
+        $pos = strpos($value, '?');
+        if ($pos !== false) {
+            // replace with new, sanitized URL part
+            $query_str = substr($value, $pos + 1);
+            $value     = substr($value, 0, $pos + 1);
+            $params    = [];
+            parse_str($query_str, $params);
+            $value .= http_build_query(array_intersect_key($params, array_flip(self::get_allowed_query_vars())));
+
+            // trim trailing question mark
+            $value = rtrim($value, '?');
+        }
+
+        // in case WordPress is served from a subdirectory, use the path relative to the WordPress root page
+        $home_path = parse_url(site_url(''), PHP_URL_PATH);
+        if ($home_path && $home_path !== '/' && str_starts_with($value, $home_path)) {
+            $value = substr($value, strlen($home_path));
+        }
+
+        // if value ends with /amp/, remove suffix (but leave trailing slash)
+        if (str_ends_with($value, '/amp/')) {
+            $value = substr($value, 0, strlen($value) - 4);
+        }
+
+        return '/' . ltrim($value, '/');
+    }
+}

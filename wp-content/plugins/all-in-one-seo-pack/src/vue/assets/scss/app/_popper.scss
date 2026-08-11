@@ -1,0 +1,33 @@
+@use 'variables.scss' as *;
+
+.popper {
+	text-align: left;
+	font-size: 12px;
+	padding: 20px;
+	background-color: #fff;
+	border: none;
+	border-radius: 3px;
+	box-shadow: 0px 3px 4.8px 0px rgba(32, 71, 102, 0.27);
+	z-index: 9999;
+	max-width: 350px;
+	line-height: 1.4;
+	white-space: normal;
+
+	&.action {
+		padding: 8px 12px;
+		background-color: $black;
+		color: #fff;
+
+		.popper__arrow {
+			border-top-color: $black;
+		}
+	}
+
+	&[x-placement^="bottom"] {
+		box-shadow: 0px 2px 4.8px 0px rgba(32, 71, 102, 0.27)
+	}
+
+	.aioseo-description {
+		margin: 0;
+	}
+}

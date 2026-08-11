@@ -1,0 +1,45 @@
+{
+    "name": "msaari/relevanssi",
+    "description": "A WordPress search plugin",
+    "type": "wordpress-plugin",
+    "homepage": "https://www.relevanssi.com",
+    "license": "GPL-3.0-only",
+    "support": {
+        "source": "https://github.com/msaari/relevanssi",
+        "forum": "https://wordpress.org/support/plugin/relevanssi/",
+        "issues": "https://github.com/msaari/relevanssi/issues",
+        "docs": "https://www.relevanssi.com/user-manual/"
+    },
+    "authors": [
+        {
+            "name": "Mikko Saari",
+            "email": "mikko@mikkosaari.fi",
+            "homepage": "https://www.mikkosaari.fi/",
+            "role": "Developer"
+        }
+    ],
+    "require": {
+        "php": "^7.1 || ^8.0"
+    },
+    "require-dev": {
+        "msaari/wp-test-framework": "^0.3.0",
+        "phpcompatibility/php-compatibility": "^9.3",
+        "phpcompatibility/phpcompatibility-wp": "^2.1",
+        "wp-coding-standards/wpcs": "^3.0",
+        "phpunit/phpunit": "^7"
+    },
+    "keywords": [
+        "search",
+        "WordPress",
+        "plugin"
+    ],
+    "scripts": {
+        "lint": "./vendor/bin/phpcs -p -s",
+        "test": "./vendor/bin/phpunit"
+    },
+    "config": {
+        "allow-plugins": {
+            "dealerdirect/phpcodesniffer-composer-installer": true
+        }
+    }
+}

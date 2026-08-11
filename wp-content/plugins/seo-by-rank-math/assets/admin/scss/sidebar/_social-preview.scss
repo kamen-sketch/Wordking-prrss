@@ -1,0 +1,9 @@
+// main: ../sidebar.scss
+
+@import '../partials/metabox/social-preview';
+
+.rank-math-modal-overlay {
+	.rank-math-social-preview-item, .rank-math-social-preview-image img {
+		display: block;
+	}
+}

@@ -1,0 +1,404 @@
+<?php
+
+/**
+ * @package koko-analytics
+ * @license GPL-3.0+
+ * @author Danny van Kooten
+ *
+ * This file contains the code required for data ingestion.
+ * It is meant to be included from the optimized endpoint file
+ * and should therefore not assume the WordPress environment is available.
+ */
+
+// phpcs:disable WordPress.Security.ValidatedSanitizedInput.MissingUnslash -- this file is executed outside of the WordPress environment
+
+namespace KokoAnalytics;
+
+use DateTimeImmutable;
+
+/**
+ * Matches the user agents of bots, crawlers, link previewers, headless browsers
+ * and HTTP client libraries.
+ *
+ * Keep this in sync with the pattern in assets/js/src/script.js
+ */
+const BOT_USER_AGENT_PATTERN = '/bot|crawl|spider|seo|lighthouse|facebookexternalhit|preview|prerender|headless|phantom|scrapy|python|curl|wget|go-http|okhttp|node-fetch|axios|java\/|libwww|http[-_]?client|monitor|uptime|pingdom|statuscake|validator|scanner/i';
+
+/**
+ * Determines whether the current request was made by something other than a person
+ * looking at a page.
+ */
+function is_automated_request(): bool
+{
+    $user_agent = $_SERVER['HTTP_USER_AGENT'] ?? '';
+    if ($user_agent === '' || \preg_match(BOT_USER_AGENT_PATTERN, $user_agent)) {
+        return true;
+    }
+
+    // The browser is prefetching or prerendering the page, so nobody is looking at it (yet).
+    // Sent by Chrome for <link rel="prefetch"> and the Speculation Rules API, on the document
+    // as well as on any subresource request it makes, which includes our beacon.
+    if (!empty($_SERVER['HTTP_SEC_PURPOSE']) || ($_SERVER['HTTP_PURPOSE'] ?? '') === 'prefetch') {
+        return true;
+    }
+
+    // Someone opened this endpoint directly instead of the tracking script beaconing to it.
+    // Only reject when the header is present and wrong, as browsers predating Sec-Fetch-*
+    // (Safari < 16.4) omit it entirely.
+    if (($_SERVER['HTTP_SEC_FETCH_MODE'] ?? '') === 'navigate') {
+        return true;
+    }
+
+    return false;
+}
+
+function extract_pageview_data(array $raw): array
+{
+    // do nothing if a required parameter is missing
+    if (!isset($raw['pa'], $raw['po'])) {
+        return [];
+    }
+
+    if (!is_string($raw['pa']) || !is_scalar($raw['po']) || (isset($raw['r']) && !is_string($raw['r']))) {
+        return [];
+    }
+
+    // path should be an absolute URL path, e.g. "/some-page/?p=1#section"
+    $path = \substr(\trim($raw['pa']), 0, 255);
+    if ($path === '' || $path[0] !== '/' || \filter_var("https://localhost{$path}", FILTER_VALIDATE_URL, FILTER_FLAG_PATH_REQUIRED) === false) {
+        return [];
+    }
+
+    // post id has to fit in an INT UNSIGNED column
+    $post_id = \filter_var($raw['po'], FILTER_VALIDATE_INT, ['options' => ['min_range' => 0, 'max_range' => 4294967295]]);
+    if ($post_id === false) {
+        return [];
+    }
+
+    // referrer URL is optional, but has to use a scheme that Normalizers\Referrer understands
+    $referrer_url = !empty($raw['r']) ? \substr(\trim($raw['r']), 0, 255) : '';
+    if ($referrer_url !== '' && (\preg_match('~^(?:https?|android-app|ios-app)://~', $referrer_url) !== 1 || \filter_var($referrer_url, FILTER_VALIDATE_URL) === false)) {
+        return [];
+    }
+
+    $hash                            = \hash(PHP_VERSION_ID >= 80100 ? "xxh64" : "sha1", $path);
+    [$new_visitor, $unique_pageview] = determine_uniqueness($raw, 'pageview', $hash);
+
+    $data = [
+        'p',                 // type indicator
+        \time(),             // unix timestamp
+        $path,
+        $post_id,
+        $new_visitor ? 1 : 0,
+        $unique_pageview ? 1 : 0,
+        $referrer_url,
+    ];
+
+    return apply_filters('koko_analytics_pageview_data', $data);
+}
+
+function extract_event_data(array $raw): array
+{
+    if (!isset($raw['e'], $raw['p'], $raw['v'])) {
+        return [];
+    }
+
+    if (!is_string($raw['e']) || !is_string($raw['p']) || !is_scalar($raw['v'])) {
+        return [];
+    }
+
+    // strip control characters, they are never legitimate in these display strings
+    // and embedded newlines would corrupt the line-oriented buffer file
+    $event_name  = (string) \preg_replace('/[\x00-\x1F\x7F]/', '', \trim($raw['e']));
+    $event_param = (string) \preg_replace('/[\x00-\x1F\x7F]/', '', \trim($raw['p']));
+    if (\strlen($event_name) === 0) {
+        return [];
+    }
+
+    $value = \filter_var($raw['v'], FILTER_VALIDATE_INT);
+    if ($value === false) {
+        return [];
+    }
+
+    // limit event name and parameter lengths
+    $event_name  = \substr($event_name, 0, 100);
+    $event_param = \substr($event_param, 0, 185);
+
+    $event_hash              = \hash(PHP_VERSION_ID >= 80100 ? "xxh64" : "sha1", "{$event_name}-{$event_param}");
+    [$unused, $unique_event] = determine_uniqueness($raw, '', $event_hash);
+
+    return [
+        'e',                   // type indicator
+        $event_name,           // event name
+        $event_param,          // event parameter
+        $unique_event ? 1 : 0, // is unique?
+        $value,                // event value,
+        \time(),               // unix timestamp
+    ];
+}
+
+function get_request_params(): array
+{
+    // We need to accept both GET and POST because the AMP integration uses URL query parameters.
+    // phpcs:ignore WordPress.Security.NonceVerification.Missing
+    $request_params = array_merge($_GET, $_POST);
+    if (function_exists('wp_unslash')) {
+        $request_params = wp_unslash($request_params);
+    }
+
+    return $request_params;
+}
+
+function collect_request()
+{
+    // ignore requests from bots, crawlers, link previews, prefetchers and direct visits to this endpoint
+    if (is_automated_request()) {
+        return;
+    }
+
+    // if WordPress environment is loaded, check if request is excluded
+    // TODO: come up with a way to check for excluded request without WordPress
+    if (\function_exists('is_request_excluded') && is_request_excluded()) {
+        return;
+    }
+
+    $request_params = get_request_params();
+    $data           = isset($request_params['e']) ? extract_event_data($request_params) : extract_pageview_data($request_params);
+    if (!empty($data)) {
+        // store data in buffer file
+        $success = isset($request_params['test']) ? test_collect_in_file() : collect_in_file($data);
+
+        // set OK headers & prevent caching
+        if (!$success) {
+            http_response_code(500);
+        } else {
+            http_response_code(200);
+        }
+    } else {
+        http_response_code(400);
+    }
+
+    header('Content-Type: text/plain; charset=utf-8');
+
+    // Prevent this response from being cached
+    header('Cache-Control: no-cache, must-revalidate, max-age=0, no-store, private');
+    header('Expires: Wed, 11 Jan 1984 05:00:00 GMT');
+
+    // Prevent this response from being indexed
+    header('X-Robots-Tag: noindex, nofollow');
+    exit;
+}
+
+function get_upload_dir(): string
+{
+    if (\defined('KOKO_ANALYTICS_UPLOAD_DIR')) {
+        return KOKO_ANALYTICS_UPLOAD_DIR;
+    }
+
+    // For backwards compatibility with optimize endpoints installed before the above constant was defined
+    if (\defined('KOKO_ANALYTICS_BUFFER_FILE')) {
+        return \dirname(KOKO_ANALYTICS_BUFFER_FILE) . '/koko-analytics';
+    }
+
+    $uploads = wp_upload_dir(null, false);
+    return \rtrim($uploads['basedir'], '/') . '/koko-analytics';
+}
+
+
+function get_buffer_filename(): string
+{
+    $upload_dir = get_upload_dir();
+
+    // return first file in directory that matches these conditions
+    if (\is_dir($upload_dir)) {
+        $filenames = \scandir($upload_dir);
+        if (\is_array($filenames)) {
+            foreach ($filenames as $filename) {
+                if (\preg_match('/^buffer-[a-f0-9]{32}\.csv$/', $filename)) {
+                    return "{$upload_dir}/{$filename}";
+                }
+            }
+        }
+    }
+
+    // if no such file exists, generate a new random filename
+    $filename = "buffer-" . \bin2hex(\random_bytes(16)) . ".csv";
+    return "{$upload_dir}/{$filename}";
+}
+
+function collect_in_file(array $data): bool
+{
+    $filename  = get_buffer_filename();
+    $directory = \dirname($filename);
+    if (! \is_dir($directory)) {
+        \mkdir($directory, 0755, true);
+    }
+    if (! \is_dir($directory)) {
+        return false;
+    }
+
+    // append serialized data to file
+    // TODO: Write CSV data here, but ideally we want to run the aggregator just once using the old data format after each plugin update
+    $content = \serialize($data);
+
+    // refuse to write records spanning multiple lines, since the aggregator parses this file line-by-line
+    if (\strpos($content, "\n") !== false) {
+        return false;
+    }
+
+    return (bool) \file_put_contents($filename, $content . PHP_EOL, FILE_APPEND | LOCK_EX);
+}
+
+function test_collect_in_file(): bool
+{
+    $filename = get_buffer_filename();
+    if (\is_file($filename)) {
+        return \is_writable($filename);
+    }
+
+    $directory = \dirname($filename);
+    if (! \is_dir($directory)) {
+        \mkdir($directory, 0755, true);
+    }
+    if (! \is_dir($directory)) {
+        return false;
+    }
+
+    return \is_writable($directory);
+}
+
+function get_site_timezone(): \DateTimeZone
+{
+    if (\defined('KOKO_ANALYTICS_TIMEZONE')) {
+        return new \DateTimeZone(KOKO_ANALYTICS_TIMEZONE);
+    }
+
+    if (\function_exists('wp_timezone')) {
+        return wp_timezone();
+    }
+
+    return new \DateTimeZone('UTC');
+}
+
+/**
+ * Return's client IP for current request, even if behind a reverse proxy
+ */
+function get_client_ip(): string
+{
+    // X-Forwarded-For sometimes contains a comma-separated list of IP addresses
+    // @see https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers/X-Forwarded-For
+    $ips = empty($_SERVER['HTTP_X_FORWARDED_FOR']) ? [] : \array_map('trim', \explode(',', $_SERVER['HTTP_X_FORWARDED_FOR']));
+
+    // Always add REMOTE_ADDR and HTTP_CLIENT_IP to list of ip addresses, if set
+    foreach (['REMOTE_ADDR', 'HTTP_CLIENT_IP'] as $key) {
+        if (!empty($_SERVER[$key])) {
+            $ips[] = $_SERVER[$key];
+        }
+    }
+
+    // return first valid IP address from list
+    foreach ($ips as $ip) {
+        if (\filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
+            return $ip;
+        }
+    }
+
+    return '';
+}
+
+/**
+ * Determines the uniqueness of $thing today
+ *
+ * @param int|string $thing
+ * @return array [bool, bool]
+ */
+function determine_uniqueness(array $request_params, string $type, $thing): array
+{
+    // determine uniqueness based on specified tracking method
+    switch ($request_params['m'] ?? 'n') {
+        case 'c':
+            return determine_uniqueness_cookie($type, $thing);
+        case 'f':
+            return determine_uniqueness_fingerprint($type, $thing);
+    }
+
+    // not using any tracking method
+    return [true, true];
+}
+
+function determine_uniqueness_cookie(string $type, $thing): array
+{
+    $things       = isset($_COOKIE['_koko_analytics_pages_viewed']) ? \explode('-', $_COOKIE['_koko_analytics_pages_viewed']) : [];
+    $unique_type  = $type && !\in_array($type[0], $things, true);
+    $unique_thing =  $unique_type || ! \in_array($thing, $things, true);
+
+    if ($unique_type) {
+        $things[] = $type[0];
+    }
+    if ($unique_thing) {
+        $things[] = $thing;
+    }
+
+    if ($unique_type || $unique_thing) {
+        \setcookie('_koko_analytics_pages_viewed', \join('-', $things), (new DateTimeImmutable('tomorrow, midnight', get_site_timezone()))->getTimestamp(), '/', "", false, true);
+    }
+
+    return [$unique_type, $unique_thing];
+}
+
+function determine_uniqueness_fingerprint(string $type, $thing): array
+{
+    // Fingerprint storage is provisioned on plugin activation and when settings change.
+    // Do not create it from the public endpoint, because that would skip directory protection.
+    $sessions_dir = get_upload_dir() . '/sessions';
+    if (! \is_dir($sessions_dir)) {
+        return [true, true];
+    }
+
+    $seed_file = "{$sessions_dir}/.daily_seed";
+    if (! \is_file($seed_file)) {
+        return [true, true];
+    }
+
+    $seed_value = \file_get_contents($seed_file);
+    if (! \is_string($seed_value)) {
+        return [true, true];
+    }
+
+    $user_agent   = $_SERVER['HTTP_USER_AGENT'] ?? ''; // HTTP_USER_AGENT is verified to be not empty earlier on in the request
+    $ip_address   = get_client_ip();
+    $visitor_id   = \hash(PHP_VERSION_ID >= 80100 ? "xxh64" : "sha1", "{$seed_value}-{$user_agent}-{$ip_address}", false);
+    $session_file = "{$sessions_dir}/{$visitor_id}";
+    $things       = [];
+
+    // only read file if it exists and is not from before today
+    // this is to protect against a cronjob that didn't run on time
+    if (\is_file($session_file)) {
+        $time_midnight = (new \DateTimeImmutable('today, midnight', get_site_timezone()))->getTimestamp();
+        if (\filemtime($session_file) < $time_midnight) {
+            \unlink($session_file);
+        } else {
+            $things = \file($session_file, FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+        }
+    }
+
+    // check if type indicator is in session file
+    $unique_type = $type && ! \in_array($type[0], $things, true);
+
+    // check if page id or event hash is in session file
+    $unique_thing = $unique_type || ! \in_array($thing, $things, true);
+
+    // build string to append to session file
+    $append = "";
+    if ($unique_type) {
+        $append .= "{$type[0]}\n";
+    }
+    if ($unique_thing) {
+        $append .= "{$thing}\n";
+    }
+    if ($append !== '') {
+        \file_put_contents($session_file, $append, FILE_APPEND | LOCK_EX);
+    }
+
+    return [$unique_type, $unique_thing];
+}
