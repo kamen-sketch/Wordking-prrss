@@ -1,0 +1,13 @@
+# Per-install secrets. wp-config.php reads credentials from the environment and
+# salts from wp-salts.php, so neither secret ever needs to be committed.
+/wp-salts.php
+/wp-config-local.php
+
+# Uploads and caches are runtime state, not source.
+/wp-content/uploads/
+/wp-content/upgrade/
+/wp-content/cache/
+/wp-content/debug.log
+
+__pycache__/
+*.pyc
