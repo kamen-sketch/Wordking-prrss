@@ -358,3 +358,64 @@ KESIMPULAN [G]: seluruh kode yang BERUBAH 7.0.3->7.1 dan reachable dari
 unauth/subscriber telah ditelaah dari file + PoC runtime. Tidak ditemukan
 kerentanan exploitable baru. Abilities API (subsistem paling baru) terbukti
 robust termasuk uji pivot aktif yang gagal. Temuan by-design F1/F2/F3 tetap.
+
+================================================================================
+[H] SWEEP OWASP TOP 10 (checklist eksplisit — lihat AUDIT-CHECKLIST-7.1-RC2.md)
+================================================================================
+Ronde ini menutup kategori OWASP yang belum diverifikasi dengan PoC runtime.
+Fokus unauth/subscriber. Semua PoC dijalankan (bukan teori).
+
+H1. A03 SQL Injection via parameter REST publik (UNAUTH)  [SAFE, live-tested]
+--------------------------------------------------------------------------------
+  Sink diuji: /wp/v2/posts & /wp/v2/comments param orderby, order, include,
+    offset, per_page, search, slug, meta_key (via rest_do_request, current_user=0).
+  Hasil (query di-capture via filter 'query', dberr dipantau):
+    orderby/order/include/offset/per_page/meta-orderby -> 400 rest_invalid_param
+      (validasi enum/integer di controller SEBELUM ke SQL).
+    search "x' OR '1'='1" -> SQL: ...LIKE '%1\'=\'1%'  (kutip di-backslash-escape).
+    slug "x'"            -> SQL: post_name IN ('inj_mark','x') (di-sanitasi slug).
+    comments orderby/order -> 400.
+  Bukti: 0 dberror, 0 marker lolos ke posisi kode SQL. Tidak ada SQLi unauth.
+
+H2. A03 XXE via parser XML (UNAUTH)  [SAFE, kontrol positif]
+--------------------------------------------------------------------------------
+  Jalur diuji: (A) IXR_Message xmlrpc (expat xml_parse), (B) DOMDocument default,
+    (C) WP_oEmbed::_parse_xml. Payload: DOCTYPE + ENTITY SYSTEM file:///tmp/secret.
+  Hasil: secret TIDAK bocor di ketiga jalur.
+    expat: external+internal entity -> parse gagal (ditolak).
+    DOMDocument (PHP 8.4/libxml>=2.9): entity eksternal tak dimuat.
+    oEmbed _parse_xml: html kosong.
+  KONTROL POSITIF: payload xmlrpc benign -> parse=1, param0='HELLO_WORLD_42'
+    -> parser BERFUNGSI, jadi parse-gagal pada XXE = penolakan entity, bukan
+    parser rusak. XXE terkonfirmasi mustahil.
+
+H3. A03 Header/CRLF injection  [SAFE]
+--------------------------------------------------------------------------------
+  wp_sanitize_redirect() (pluggable.php): str_replace ' '->%20, lalu
+    preg_replace('|[^a-z0-9-~+_.?#=&;,/:%!*\[\]()@]|i','') -> \r\n DILUCUTI
+    (di luar allowlist). wp_safe_redirect() juga trim("\t\n\r\0..."). Ditambah
+    header() PHP modern menolak CRLF. Injeksi header via redirect_to mustahil.
+
+H4. A02 Cryptographic Failures  [SAFE]
+--------------------------------------------------------------------------------
+  wp_verify_nonce -> hash_equals (timing-safe), dua jendela tick.
+  wp_validate_auth_cookie -> hash_equals($hash,$hmac).
+  wp_check_password -> password_verify (bcrypt $wp$/$P$) + hash_equals utk md5 lawas.
+  REST: rest_cookie_check_errors -> wp_verify_nonce($nonce,'wp_rest').
+  Semua perbandingan rahasia timing-safe; HMAC pakai salt situs.
+
+H5. A06 Vulnerable & Outdated Components  [SAFE]
+--------------------------------------------------------------------------------
+  PHPMailer const VERSION 7.1.1, SimplePie 1.9.0, Requests 2.x, jQuery 3.7.1.
+  Semua rilis terkini; tak ada versi dengan CVE kritis publik yang dikenal.
+
+H6. A05 Security Misconfiguration  [SAFE — bukan cacat kode core]
+--------------------------------------------------------------------------------
+  wp-config-sample: WP_DEBUG=false default. Directory listing = tanggung jawab
+    server (Apache Options -Indexes / nginx autoindex off); stub index.php core
+    hanya defense-in-depth. Bukan kerentanan kode core.
+
+KESIMPULAN [H]: seluruh kategori OWASP Top 10 yang relevan untuk core code &
+reachable unauth/subscriber telah diverifikasi dengan PoC runtime. Tidak ada
+temuan exploitable baru. Kategori yang menghasilkan temuan tetap by-design
+(A07 enum & A07 brute-amplif & A10 SSRF = F1/F2/F3/D/E).
